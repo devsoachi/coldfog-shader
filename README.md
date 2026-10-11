@@ -1,4 +1,4 @@
-# coldFog v0.5 | shader pack for Project Viewpoint
+# coldFog v0.6 | shader pack for Project Viewpoint
 
 <img width="1280" height="720" alt="coldfogshot" src="https://github.com/user-attachments/assets/413d5f5f-2cd3-4f13-b5fc-0794ab130509" />
 
