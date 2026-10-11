@@ -1,6 +1,7 @@
 # coldFog v0.6 | shader pack for Project Viewpoint
 
-<img width="1280" height="720" alt="coldfogshot" src="https://github.com/user-attachments/assets/413d5f5f-2cd3-4f13-b5fc-0794ab130509" />
+<img width="2273" height="649" alt="coldfogshot" src="https://github.com/user-attachments/assets/4fa01364-456a-44ee-be61-c4f0f8049a62" />
+
 
 This shaderpack intends to make the game look like a foggy and hostile enviroment, where is hard to look further and giving a real terror feel using GLSL code on the 3D mod, Project Viewpoint for Project Zomboid. Uses different techniques to adapt this onto the game.
 
