@@ -134,12 +134,12 @@ vec3 coldFogColor(vec3 viewDir) {
   return mix(fc, vec3(fl) * tint, float(OPTION_BLUEFOG));
 }
 
-vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power them when in darkness
+vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power when in darkness
   vec3 acc = vec3(0.0);
   float aspect = res.x / res.y;
   for (int i = 0; i < 12; i++) {
     float a = 6.2831853 * float(i) / 12.0 + 0.7;
-    float r = 0.035 * (0.35 + 0.65 * float((i * 5) % 12) / 12.0);        // radios repartidos
+    float r = 0.035 * (0.35 + 0.65 * float((i * 5) % 12) / 12.0);
     vec3 smp = texture(uColor, uv + vec2(cos(a) / aspect, sin(a)) * r).rgb;
     acc += smp * smoothstep(0.35, 1.5, dot(smp, LUMA) * uExposure);
   }
@@ -227,7 +227,7 @@ void main() {
     k = clamp(k * (1.0 + (w - 0.5) * 0.9 * float(OPTION_FOG_WISPS)), 0.0, 1.0);
 
     float lit = smoothstep(0.35, 1.5, dot(color, LUMA) * uExposure); // the lights go into the fog
-    k *= 1.0 - clamp(penetration, 0.0, 1.0) * lit;
+    k *= 1.0 - clamp(OPTION_PENETRATION, 0.0, 1.0) * lit;
     fogK = k;
     color = mix(color, coldFogColor(normalize(pos - uEye)), k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
