@@ -21,6 +21,7 @@ out vec4 fragColor;
 #include "lib/common.glsl"
 #include "lib/fog.glsl"
 #include "lib/fog_amount.glsl"
+#include "lib/eye_meter.glsl"
 
 #ifndef OPTION_BLUE
 #define OPTION_BLUE 1.0
@@ -225,7 +226,7 @@ void main() {
     k = clamp(k * (1.0 + (w - 0.5) * 0.9 * float(OPTION_FOG_WISPS)), 0.0, 1.0);
 
     float lit = smoothstep(0.35, 1.5, dot(color, LUMA) * uExposure); // the lights go into the fog
-    k *= 1.0 - clamp(OPTION_PENETRATION, 0.0, 1.0) * lit;
+    k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
     fogK = k;
     color = mix(color, coldFogColor(normalize(pos - uEye)), k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
@@ -242,6 +243,10 @@ void main() {
 
 // soft glow around bright lights, stronger within dense fog
   if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6; 
+
+  if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6;
+
+  if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
 
   color = shoulder(max(color, vec3(0.0)) * uExposure);
 
