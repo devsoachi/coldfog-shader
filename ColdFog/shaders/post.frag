@@ -70,8 +70,8 @@ out vec4 fragColor;
 #ifndef OPTION_PIXEL
 #define OPTION_PIXEL 1.0
 #endif
-#ifndef OPTION_COLORBITS
-#define OPTION_COLORBITS 8.0
+#ifndef OPTION_COLOR_BITS
+#define OPTION_COLOR_BITS 8.0
 #endif
 #ifndef OPTION_DITHERING
 #define OPTION_DITHERING 0.6
