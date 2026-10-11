@@ -24,6 +24,7 @@ out vec4 fragColor;
 #ifndef OPTION_EXPOSURE // it needs to be up here because is a fallback
 #define OPTION_EXPOSURE 1.0
 #endif
+#include "lib/pseudofog_light.glsl"
 #include "lib/camera.glsl"
 #include "lib/common.glsl"
 #include "lib/fog.glsl"
@@ -95,6 +96,9 @@ out vec4 fragColor;
 #ifndef OPTION_SKY_FOG_DISTANCE
 #define OPTION_SKY_FOG_DISTANCE 120.0
 #endif
+#ifndef OPTION_LIGHTCUT
+#define OPTION_LIGHTCUT 0.3
+#endif
 #ifndef OPTION_PENETRATION
 #define OPTION_PENETRATION 0.6
 #endif
@@ -109,32 +113,9 @@ out vec4 fragColor;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
-vec2 hash22(vec2 p) {
-  p = fract(p * vec2(0.1031, 0.1030));
-  p += dot(p, p.yx + 33.33);
-  return fract((p.xx + p.yx) * p.xy);
-}
-
-float vnoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = hash22(i).x;
-  float b = hash22(i + vec2(1.0, 0.0)).x;
-  float c = hash22(i + vec2(0.0, 1.0)).x;
-  float d = hash22(i + vec2(1.0, 1.0)).x;
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-// bayer for dithering
-float bayer4(ivec2 p) {
-  const float M[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
-  return (M[(p.y & 3) * 4 + (p.x & 3)] + 0.5) / 16.0;
-}
-
-
-float fogDensity(float linDepth, float dist, float boostExp) {
-  float fog = max(fogAt(linDepth, uFogRange), hazeAt(dist, uHaze));
+float fogDensity(vec3 pos, float dist, float linDepth, float boostExp) {
+  // fog range + air + the weather mist, so foggy weather really fogs the scene
+  float fog = distanceShare(pos, dist, linDepth, uFogRange, uHaze);
   fog = pow(clamp(fog, 0.0, 1.0), boostExp);
   float mist = 1.0 - exp(-dist * float(OPTION_MIST));
   return 1.0 - (1.0 - fog) * (1.0 - mist);
@@ -147,6 +128,12 @@ vec3 coldFogColor(vec3 viewDir) {
   return mix(fc, vec3(fl) * tint, float(OPTION_BLUEFOG));
 }
 
+float lightMask(vec3 c) {
+  float b = dot(c, LUMA) * uExposure * float(OPTION_EXPOSURE);
+  float cut = max(float(OPTION_LIGHTCUT), 0.01);
+  return smoothstep(cut, cut * 4.0, b);
+}
+
 vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power when in darkness
   vec3 acc = vec3(0.0);
   float aspect = res.x / res.y;
@@ -154,7 +141,7 @@ vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power when in da
     float a = 6.2831853 * float(i) / 12.0 + 0.7;
     float r = 0.035 * (0.35 + 0.65 * float((i * 5) % 12) / 12.0);
     vec3 smp = texture(uColor, uv + vec2(cos(a) / aspect, sin(a)) * r).rgb;
-    acc += smp * smoothstep(0.35, 1.5, dot(smp, LUMA) * uExposure);
+    acc += smp * lightMask(smp);
   }
   return acc / 12.0;
 }
@@ -201,7 +188,7 @@ void main() {
     if (d0 < 1.0) {
       // world cells size 1/4 it changes depending on movement
       vec3 cell = floor(scenePos(uv, d0) * 4.0);
-      vec2 j = hash22(cell.xz + cell.yy * vec2(17.0, 31.0)) - 0.5;
+      vec2 j = cfHash22(cell.xz + cell.yy * vec2(17.0, 31.0)) - 0.5;
       uv += j * 4.0 * wob * px / res;                  // up to +-2 pixels
     }
     uv = clamp(uv, 0.5 / res, 1.0 - 0.5 / res);
@@ -231,7 +218,7 @@ void main() {
   if (depth < 1.0) {
     vec3 pos = scenePos(uv, depth);
     float dist = distance(pos, uEye);
-    float k = fogDensity(linearDepth(depth), dist, fogBoostExp);
+    float k = fogDensity(pos, dist, linearDepth(depth), fogBoostExp);
 
     // aprox 1.7 for low fog
     float above = max(pos.y - (uEye.y - 1.7), 0.0);
@@ -239,19 +226,22 @@ void main() {
     k = 1.0 - (1.0 - k) * (1.0 - low);
 
     // wisps for lower fog
-    float w = vnoise(pos.xz * 0.07 + vec2(uTime * 0.03, uTime * 0.017));
+    float w = cfNoise(pos.xz * 0.07 + vec2(uTime * 0.03, uTime * 0.017));
     k = clamp(k * (1.0 + (w - 0.5) * 0.9 * float(OPTION_FOG_WISPS)), 0.0, 1.0);
 
-    float lit = smoothstep(0.35, 1.5, dot(color, LUMA) * uExposure); // the lights go into the fog
+    float lit = lightMask(color); // the lights go into the fog
     k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
     fogK = k;
     color = mix(color, coldFogColor(normalize(pos - uEye)), k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
     vec3 dir = normalize(scenePos(uv, 0.5) - uEye);
     float ref = float(OPTION_SKY_FOG_DISTANCE);
-    float k = fogDensity(ref, ref, fogBoostExp);                  // how dense is the fog
-    float height = mix(0.12, 1.3, k);
-    float skyK = k * (1.0 - smoothstep(0.0, height, max(dir.y, 0.0))) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0);
+    float h0 = mistHeight(uEye.y);
+    float weather = 1.0 - exp(-mistDepth(h0, max(dir.y, 1.0e-3), MIST_ENDLESS) * mistOpen(uEye, uEye + dir * 20.0));
+    weather = pow(clamp(weather, 0.0, 1.0), fogBoostExp);
+    float km = 1.0 - exp(-ref * float(OPTION_MIST));
+    float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, km), max(dir.y, 0.0));
+    float skyK = (1.0 - (1.0 - weather) * (1.0 - km * shape)) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0);
     fogK = skyK;
     color = mix(color, coldFogColor(dir), skyK);
   }
@@ -277,17 +267,17 @@ void main() {
 
   float grain = clamp(float(OPTION_GRAIN), 0.0, 1.0);
   if (grain > 0.0) {
-    float g = ign(gl_FragCoord.xy + 5.588 * float(uFrame & 63)) - 0.5;
+    float g = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63)) - 0.5;
     color += g * grain * 0.09 * (1.0 - 0.6 * dot(color, LUMA));
   }
 
   float bits = floor(float(OPTION_COLORBITS) + 0.5);   // reduce color depth by using ordered dithering
   if (bits < 8.0) {
     float levels = exp2(bits) - 1.0;
-    float b = bayer4(ivec2(floor(gl_FragCoord.xy / px)));
+    float b = cfBayer4(ivec2(floor(gl_FragCoord.xy / px)));
     color = floor(color * levels + mix(0.5, b, clamp(float(OPTION_DITHERING), 0.0, 1.0))) / levels;
   } else {
-    color += (ign(gl_FragCoord.xy + 17.0) - 0.5) / 255.0;
+    color += (cfHash21(gl_FragCoord.xy + 17.0) - 0.5) / 255.0;
   }
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
