@@ -16,12 +16,21 @@ uniform vec2 uFogRange;
 uniform vec2 uHaze;
 uniform float uTime;
 uniform int uFrame;
+#if PIPELINE_SUN_SHAFTS
+uniform sampler2D uSunShafts;
+uniform float uShaftStrength;
+#endif
 out vec4 fragColor;
+#ifndef OPTION_EXPOSURE // it needs to be up here because is a fallback
+#define OPTION_EXPOSURE 1.0
+#endif
 #include "lib/camera.glsl"
 #include "lib/common.glsl"
 #include "lib/fog.glsl"
 #include "lib/fog_amount.glsl"
 #include "lib/eye_meter.glsl"
+#include "lib/purkinje.glsl"
+#include "lib/tone.glsl"
 
 #ifndef OPTION_BLUE
 #define OPTION_BLUE 1.0
@@ -71,8 +80,8 @@ out vec4 fragColor;
 #ifndef OPTION_PIXEL
 #define OPTION_PIXEL 1.0
 #endif
-#ifndef OPTION_COLOR_BITS
-#define OPTION_COLOR_BITS 8.0
+#ifndef OPTION_COLORBITS
+#define OPTION_COLORBITS 8.0
 #endif
 #ifndef OPTION_DITHERING
 #define OPTION_DITHERING 0.6
@@ -91,6 +100,9 @@ out vec4 fragColor;
 #endif
 #ifndef OPTION_HALO
 #define OPTION_HALO 1.0
+#endif
+#ifndef OPTION_DARKVISION
+#define OPTION_DARKVISION 0.4
 #endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
@@ -168,7 +180,7 @@ vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
   // contrast around midgrays
   c = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
 
-vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
+  vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
   c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA))); // the curve only acts from the mid-tones up so dark places are not crushed to pure black
 
   float r = length((uv - 0.5) * vec2(1.15, 0.95));
@@ -244,19 +256,24 @@ void main() {
     color = mix(color, coldFogColor(dir), skyK);
   }
 
+#if PIPELINE_SUN_SHAFTS
+  color += texture(uSunShafts, uv).rgb * uShaftStrength;
+#endif
   if (uBloomStrength > 0.0) color += texture(uBloom, uv).rgb * uBloomStrength * float(OPTION_GLOW);
 
 // soft glow around bright lights, stronger within dense fog
-  if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6; 
-
   if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6;
 
   if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
 
-  color = shoulder(max(color, vec3(0.0)) * uExposure);
+  float toneLuma;
+  color = tone(purkinje(max(color * uExposure * float(OPTION_EXPOSURE), vec3(0.0))), toneLuma);
 
   // cold grading for more saturated blues
   color = mix(color, coldGrade(color, vUv, fogK), clamp(float(OPTION_BLUE), 0.0, 1.0));
+
+  float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
+  if (dv > 0.0) color += dv * 0.07 * (1.0 - smoothstep(0.0, 0.25, dot(color, LUMA))) * vec3(0.80, 0.95, 1.10);
 
   float grain = clamp(float(OPTION_GRAIN), 0.0, 1.0);
   if (grain > 0.0) {
@@ -264,7 +281,7 @@ void main() {
     color += g * grain * 0.09 * (1.0 - 0.6 * dot(color, LUMA));
   }
 
-  float bits = floor(float(OPTION_COLOR_BITS) + 0.5);   // reduce color depth by using ordered dithering
+  float bits = floor(float(OPTION_COLORBITS) + 0.5);   // reduce color depth by using ordered dithering
   if (bits < 8.0) {
     float levels = exp2(bits) - 1.0;
     float b = bayer4(ivec2(floor(gl_FragCoord.xy / px)));
