@@ -163,6 +163,7 @@ vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
 
   // contrast around midgrays
   c = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
+  c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA))); // the curve only acts from the mid-tones up so dark places are not crushed to pure black
 
   float r = length((uv - 0.5) * vec2(1.15, 0.95));
   c *= 1.0 - smoothstep(0.35, 0.95, r) * float(OPTION_BLUEVIGNETTE);
@@ -238,6 +239,9 @@ void main() {
   }
 
   if (uBloomStrength > 0.0) color += texture(uBloom, uv).rgb * uBloomStrength * float(OPTION_GLOW);
+
+// soft glow around bright lights, stronger within dense fog
+  if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6; 
 
   color = shoulder(max(color, vec3(0.0)) * uExposure);
 
