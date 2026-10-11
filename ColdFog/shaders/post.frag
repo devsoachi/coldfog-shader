@@ -90,7 +90,7 @@ out vec4 fragColor;
 #define OPTION_PENETRATION 0.6
 #endif
 #infndef OPTION_HALO
-#defien OPTION_HALO 1.0
+#define OPTION_HALO 1.0
 #endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
