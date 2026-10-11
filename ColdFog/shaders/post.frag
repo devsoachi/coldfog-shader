@@ -89,6 +89,9 @@ out vec4 fragColor;
 #ifndef OPTION_PENETRATION
 #define OPTION_PENETRATION 0.6
 #endif
+#infndef OPTION_HALO
+#defien OPTION_HALO 1.0
+#endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
 
@@ -164,6 +167,8 @@ vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
 
   // contrast around midgrays
   c = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
+
+vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
   c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA))); // the curve only acts from the mid-tones up so dark places are not crushed to pure black
 
   float r = length((uv - 0.5) * vec2(1.15, 0.95));
