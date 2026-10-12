@@ -227,9 +227,6 @@ void main() {
   }
 
   float depth = texture(uDepth, uv).r;
-
-  vec4 volume = mix(vec4(0.0, 0.0, 0.0, 1.0), texture(uVolume, uv), uVolumeOn);
-  if (any(isnan(volume)) || any(isinf(volume))) volume = vec4(0.0, 0.0, 0.0, 1.0);
   color = color * volume.a + volume.rgb;
 
   float fogBoostExp = 1.0 / (1.0 + float(OPTION_FOG_BOOST));
