@@ -215,6 +215,9 @@ void main() {
   if (uDebugView != 0) { fragColor = vec4(color, 1.0); return; }
   if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
 
+  vec4 volume = mix(vec4(0.0, 0.0, 0.0, 1.0), texture(uVolume, uv), uVolumeOn);
+  if (any(isnan(volume)) || any(isinf(volume))) volume = vec4(0.0, 0.0, 0.0, 1.0);
+
 // a way to know for the engine the mist for outdoors
   float mb = max(float(OPTION_MISTBOOST), 1.0);
   if (mb > 1.001 && volume.a < 0.999) {
