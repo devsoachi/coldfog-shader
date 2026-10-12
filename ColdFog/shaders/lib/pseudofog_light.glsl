@@ -31,4 +31,11 @@ float cfBayer4(ivec2 p) {
   return (M[(p.y & 3) * 4 + (p.x & 3)] + 0.5) / 16.0;
 }
 
+// own custom mist as of engine failing to include his own whose density falls off exponentially with height
+float cfMistDepth(float sigma, float H, float h0, float mu, float d) {
+  float x = d * mu / H;
+  float k = abs(x) < 1.0e-3 ? d * (1.0 - 0.5 * x) : H / mu * (1.0 - exp(-x));   // = d * (1 - e^-x) / x, stable near 0
+  return sigma * exp(-h0 / H) * k;
+}
+
 #endif
