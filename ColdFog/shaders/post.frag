@@ -106,6 +106,9 @@ out vec4 fragColor;
 #ifndef OPTION_HALO
 #define OPTION_HALO 1.0
 #endif
+#ifndef OPTION_FOGTEST
+#define OPTION_FOGTEST 0.0
+#endif
 #ifndef OPTION_DARKVISION
 #define OPTION_DARKVISION 0.4
 #endif
@@ -212,6 +215,14 @@ void main() {
   if (uDebugView != 0) { fragColor = vec4(color, 1.0); return; }
   if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
 
+// a way to know for the engine the mist for outdoors
+  float mb = max(float(OPTION_MISTBOOST), 1.0);
+  if (mb > 1.001 && volume.a < 0.999) {
+    float t2 = pow(volume.a, mb);
+    volume.rgb *= clamp((1.0 - t2) / max(1.0 - volume.a, 1.0e-3), 1.0, 2.0 * mb);
+    volume.a = t2;
+  }
+
   float depth = texture(uDepth, uv).r;
 
   vec4 volume = mix(vec4(0.0, 0.0, 0.0, 1.0), texture(uVolume, uv), uVolumeOn);
@@ -283,6 +294,19 @@ void main() {
     color = floor(color * levels + mix(0.5, b, clamp(float(OPTION_DITHERING), 0.0, 1.0))) / levels;
   } else {
     color += (cfHash21(gl_FragCoord.xy + 17.0) - 0.5) / 255.0;
+  }
+
+  // diagnostic with fogtest = 1, six grey squares at the top left, left to right: 1 uMist, 2 uMist x 10, 3 the engine
+  if (float(OPTION_FOGTEST) > 0.5 && vUv.y > 0.94 && vUv.x < 0.18) {
+    float box = floor(vUv.x / 0.03);
+    float v = (box < 1.0) ? uMist
+            : (box < 2.0) ? uMist * 10.0
+            : (box < 3.0) ? fogAt(100.0, uFogRange)
+            : (box < 4.0) ? hazeAt(100.0, uHaze)
+            : (box < 5.0) ? 1.0 - mix(1.0, texture(uVolume, vec2(0.5)).a, uVolumeOn)
+            : linearDepth(texture(uDepth, vec2(0.5)).r) / 200.0;
+    fragColor = vec4(vec3(clamp(v, 0.0, 1.0)), 1.0);
+    return;
   }
   fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
