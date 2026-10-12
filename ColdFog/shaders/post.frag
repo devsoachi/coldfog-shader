@@ -112,6 +112,9 @@ out vec4 fragColor;
 #ifndef OPTION_DARKVISION
 #define OPTION_DARKVISION 0.4
 #endif
+#ifndef OPTION_VISIBILITY
+#define OPTION_VISIBILITY 0.0
+#endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
 
@@ -247,6 +250,8 @@ void main() {
 
     float lit = lightMask(color); // the lights go into the fog
     k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
+    float vis = float(OPTION_VISIBILITY);
+    if (vis > 0.0) k = max(k, smoothstep(vis * 0.55, vis, dist));   // hard limit: nothing beyond vis is seen
     fogK = k;
     color = mix(color, coldFogColor(normalize(pos - uEye)), k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
@@ -256,6 +261,8 @@ void main() {
     float weather = 1.0 - exp(-tauSky);
     weather = pow(clamp(weather, 0.0, 1.0), fogBoostExp);
     float km = 1.0 - exp(-ref * float(OPTION_MIST));
+    float vis = float(OPTION_VISIBILITY);
+    if (vis > 0.0) km = max(km, smoothstep(vis * 0.55, vis, ref));
     float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, km), max(dir.y, 0.0));
     float skyK = (1.0 - (1.0 - weather) * (1.0 - km * shape)) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0);
     fogK = skyK;
