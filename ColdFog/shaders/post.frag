@@ -16,6 +16,7 @@ uniform vec2 uFogRange;
 uniform vec2 uHaze;
 uniform float uTime;
 uniform int uFrame;
+uniform float uMist;
 #if PIPELINE_SUN_SHAFTS
 uniform sampler2D uSunShafts;
 uniform float uShaftStrength;
@@ -113,9 +114,16 @@ out vec4 fragColor;
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
+const float COLDFOG_MIST_SIGMA = 0.075;    // made calculation for mist - lib/pseudofog_light.glsl for more info
+const float COLDFOG_MIST_HEIGHT = 12.0;
+
 float fogDensity(vec3 pos, float dist, float linDepth, float boostExp) {
-  // fog range + air + the weather mist, so foggy weather really fogs the scene
-  float fog = distanceShare(pos, dist, linDepth, uFogRange, uHaze);
+  float fog = max(fogAt(linDepth, uFogRange), hazeAt(dist, uHaze));
+  // it only starts a few squares away so rooms are not fogged inside
+  float mu = (pos.y - uEye.y) / max(dist, 1.0e-4);
+  float tau = cfMistDepth(uMist * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), mu, dist);
+  float weather = (1.0 - exp(-tau)) * smoothstep(8.0, 40.0, dist);
+  fog = 1.0 - (1.0 - fog) * (1.0 - weather);
   fog = pow(clamp(fog, 0.0, 1.0), boostExp);
   float mist = 1.0 - exp(-dist * float(OPTION_MIST));
   return 1.0 - (1.0 - fog) * (1.0 - mist);
@@ -164,11 +172,8 @@ vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
   vec3 tint = mix(vec3(0.70, 0.88, 1.05), vec3(0.92, 0.98, 1.02), smoothstep(0.0, 0.7, l));
   c *= mix(vec3(1.0), tint, cool);
 
-  // contrast around midgrays
-  c = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
-
-  vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
-  c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA))); // the curve only acts from the mid-tones up so dark places are not crushed to pure black
+   vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
+  c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA)));
 
   float r = length((uv - 0.5) * vec2(1.15, 0.95));
   c *= 1.0 - smoothstep(0.35, 0.95, r) * float(OPTION_BLUEVIGNETTE);
@@ -236,8 +241,8 @@ void main() {
   } else if (float(OPTION_SKY_FOG) > 0.0) {
     vec3 dir = normalize(scenePos(uv, 0.5) - uEye);
     float ref = float(OPTION_SKY_FOG_DISTANCE);
-    float h0 = mistHeight(uEye.y);
-    float weather = 1.0 - exp(-mistDepth(h0, max(dir.y, 1.0e-3), MIST_ENDLESS) * mistOpen(uEye, uEye + dir * 20.0));
+    float tauSky = cfMistDepth(uMist * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), max(dir.y, 1.0e-3), 1.0e6);
+    float weather = 1.0 - exp(-tauSky);
     weather = pow(clamp(weather, 0.0, 1.0), fogBoostExp);
     float km = 1.0 - exp(-ref * float(OPTION_MIST));
     float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, km), max(dir.y, 0.0));
