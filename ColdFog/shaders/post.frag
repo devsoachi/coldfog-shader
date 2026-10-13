@@ -1,6 +1,6 @@
 #version 330
 
-// ColdFog shaderpack made for viewpoint, it gives blue-green tinted dense fog, heavy fog depending on setting (using wisps, low fog and bayer calculations)
+// coldFog shaderpack made for viewpoint, it gives blue-green tinted dense fog, heavy fog depending on setting (using wisps, low fog and bayer calculations)
 // also uses film grain, dithering, chromatic aberration and optional reduced color depth
 
 in vec2 vUv;
@@ -17,6 +17,7 @@ uniform vec2 uHaze;
 uniform float uTime;
 uniform int uFrame;
 uniform float uMist;
+uniform float uEyeSky;
 #if PIPELINE_SUN_SHAFTS
 uniform sampler2D uSunShafts;
 uniform float uShaftStrength;
@@ -114,6 +115,9 @@ out vec4 fragColor;
 #endif
 #ifndef OPTION_VISIBILITY
 #define OPTION_VISIBILITY 0.0
+#endif
+#ifndef OPTION_INDOORFOG
+#define OPTION_INDOORFOG 0.0
 #endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
@@ -234,6 +238,8 @@ void main() {
 
   float fogBoostExp = 1.0 / (1.0 + float(OPTION_FOG_BOOST));
   float fogK = 0.0;
+  float veil = 0.0;
+
   if (depth < 1.0) {
     vec3 pos = scenePos(uv, depth);
     float dist = distance(pos, uEye);
@@ -250,11 +256,16 @@ void main() {
 
     float lit = lightMask(color); // the lights go into the fog
     k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
+    k *= mix(clamp(float(OPTION_INDOORFOG), 0.0, 1.0), 1.0, smoothstep(0.5, 0.8, uEyeSky));
+
     float vis = float(OPTION_VISIBILITY);
-    if (vis > 0.0) k = max(k, smoothstep(vis * 0.55, vis, dist));   // hard limit: nothing beyond vis is seen
+    if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
     fogK = k;
     color = mix(color, coldFogColor(normalize(pos - uEye)), k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
+    vec3 pos = scenePos(uv, depth);
+    float dist = distance(pos, uEye);
+    float k = fogDensity(pos, dist, linearDepth(depth), fogBoostExp);
     vec3 dir = normalize(scenePos(uv, 0.5) - uEye);
     float ref = float(OPTION_SKY_FOG_DISTANCE);
     float tauSky = cfMistDepth(uMist * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), max(dir.y, 1.0e-3), 1.0e6);
@@ -262,17 +273,23 @@ void main() {
     weather = pow(clamp(weather, 0.0, 1.0), fogBoostExp);
     float km = 1.0 - exp(-ref * float(OPTION_MIST));
     float vis = float(OPTION_VISIBILITY);
-    if (vis > 0.0) km = max(km, smoothstep(vis * 0.55, vis, ref));
+    if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
     float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, km), max(dir.y, 0.0));
     float skyK = (1.0 - (1.0 - weather) * (1.0 - km * shape)) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0);
+
+    if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, ref) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0); skyK = max(skyK, veil); }
     fogK = skyK;
     color = mix(color, coldFogColor(dir), skyK);
   }
 
+  float seen = 1.0 - veil;
+
 #if PIPELINE_SUN_SHAFTS
-  color += texture(uSunShafts, uv).rgb * uShaftStrength;
+  color += texture(uSunShafts, uv).rgb * uShaftStrength * seen;
 #endif
-  if (uBloomStrength > 0.0) color += texture(uBloom, uv).rgb * uBloomStrength * float(OPTION_GLOW);
+  if (uBloomStrength > 0.0) color += texture(uBloom, uv).rgb * uBloomStrength * float(OPTION_GLOW) * seen;
+
+  if (float(OPTION_HALO) > 0.0 && fogK > 0.02 && veil < 0.99) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6 * seen;
 
 // soft glow around bright lights, stronger within dense fog
   if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6;
