@@ -18,6 +18,7 @@ uniform float uTime;
 uniform int uFrame;
 uniform float uMist;
 uniform float uEyeSky;
+uniform float uNight;
 #if PIPELINE_SUN_SHAFTS
 uniform sampler2D uSunShafts;
 uniform float uShaftStrength;
@@ -119,6 +120,15 @@ out vec4 fragColor;
 #ifndef OPTION_INDOORFOG
 #define OPTION_INDOORFOG 0.0
 #endif
+#ifndef OPTION_FOGLIGHT
+#define OPTION_FOGLIGHT 1.0
+#endif
+#ifndef OPTION_FOGLIFT
+#define OPTION_FOGLIFT 0.0
+#endif
+#ifndef OPTION_FOGLEVEL
+#define OPTION_FOGLEVEL 0.0
+#endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
 
@@ -155,25 +165,27 @@ float lightMask(vec3 c) {
 vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power when in darkness
   vec3 acc = vec3(0.0);
   float aspect = res.x / res.y;
-  for (int i = 0; i < 12; i++) {
-    float a = 6.2831853 * float(i) / 12.0 + 0.7;
-    float r = 0.035 * (0.35 + 0.65 * float((i * 5) % 12) / 12.0);
-    vec3 smp = texture(uColor, uv + vec2(cos(a) / aspect, sin(a)) * r).rgb;
+  float rot = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63)) * 6.2831853;
+  for (int i = 0; i < 6; i++) {
+    float a = 6.2831853 * float(i) / 6.0 + rot;
+    float r = 0.035 * (0.35 + 0.65 * float((i * 5) % 6) / 6.0);
+    vec3 smp = min(texture(uColor, uv + vec2(cos(a) / aspect, sin(a)) * r).rgb, vec3(64.0));
+    if (any(isnan(smp))) continue;
     acc += smp * lightMask(smp);
   }
-  return acc / 12.0;
+  return acc / 6.0;
 }
 
 vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
   float protect = clamp(fogK * float(OPTION_GREENFOG) * 1.2, 0.0, 1.0);
   float sat = mix(float(OPTION_BLUESATURATION), 0.95, protect);
-  float cool = float(OPTION_BLUENESS) * (1.0 - protect * 0.85);
+  float cool = float(OPTION_BLUENESS) * (1.0 - protect * 0.85) * smoothstep(0.45, 0.9, uNight);
 
   float l = dot(c, LUMA);
   c = mix(vec3(l), c, sat);
 
   // take off warm residual and take it to the blue tone
-  float warm = max(c.r - max(c.g, c.b), 0.0) * float(OPTION_WARMDOWN);
+  float warm = max(c.r - max(c.g, c.b), 0.0) * float(OPTION_WARMDOWN) * smoothstep(0.45, 0.9, uNight);
   c.r -= warm;
   c.g += warm * 0.12;
   c.b += warm * 0.80;
@@ -240,6 +252,8 @@ void main() {
   float fogK = 0.0;
   float veil = 0.0;
 
+  vec3 fogHdr = vec3(0.0);
+
   if (depth < 1.0) {
     vec3 pos = scenePos(uv, depth);
     float dist = distance(pos, uEye);
@@ -261,7 +275,8 @@ void main() {
     float vis = float(OPTION_VISIBILITY);
     if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
     fogK = k;
-    color = mix(color, coldFogColor(normalize(pos - uEye)), k);
+    vec3 vd = normalize(pos - uEye);
+    fogHdr = coldFogColor(normalize(vec3(vd.x, vd.y * (1.0 - k), vd.z) + vec3(0.0, 0.0, 1.0e-4)));
   } else if (float(OPTION_SKY_FOG) > 0.0) {
     vec3 pos = scenePos(uv, depth);
     float dist = distance(pos, uEye);
@@ -279,9 +294,20 @@ void main() {
 
     if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, ref) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0); skyK = max(skyK, veil); }
     fogK = skyK;
-    color = mix(color, coldFogColor(dir), skyK);
+    fogHdr = coldFogColor(normalize(vec3(dir.x, dir.y * (1.0 - skyK), dir.z) + vec3(0.0, 0.0, 1.0e-4)));
+    color = mix(color, fogHdr, skyK);
   }
 
+  if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
+
+  float fogLevel = float(OPTION_FOGLEVEL);
+  if (fogLevel > 0.0) {  
+    float fl = max(dot(fogHdr, LUMA) * uExposure * float(OPTION_EXPOSURE), 1.0e-3);
+    float want = fogLevel * mix(1.0, 0.1, smoothstep(0.45, 0.9, uNight));   // at night the fog stays dark
+    color += fogHdr * (clamp(want / fl, 0.25, 8.0) - 1.0) * fogK;
+  }
+
+  color += volume.rgb * fogK * float(OPTION_FOGLIGHT);
   float seen = 1.0 - veil;
 
 #if PIPELINE_SUN_SHAFTS
@@ -291,19 +317,16 @@ void main() {
 
   if (float(OPTION_HALO) > 0.0 && fogK > 0.02 && veil < 0.99) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6 * seen;
 
-// soft glow around bright lights, stronger within dense fog
-  if (float(OPTION_HALO) > 0.0 && fogK > 0.02) color += lightHalo(uv, res) * float(OPTION_HALO) * fogK * 0.6;
-
-  if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
-
   float toneLuma;
   color = tone(purkinje(max(color * uExposure * float(OPTION_EXPOSURE), vec3(0.0))), toneLuma);
+
+  color *= 1.0 + float(OPTION_FOGLIFT) * fogK;   // brighter fog, after the eye has adapted to it
 
   // cold grading for more saturated blues
   color = mix(color, coldGrade(color, vUv, fogK), clamp(float(OPTION_BLUE), 0.0, 1.0));
 
   float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
-  if (dv > 0.0) color += dv * 0.07 * (1.0 - smoothstep(0.0, 0.25, dot(color, LUMA))) * vec3(0.80, 0.95, 1.10);
+  if (dv > 0.0) color += dv * 0.07 * (1.0 - smoothstep(0.0, 0.25, dot(color, LUMA))) * mix(vec3(1.0), vec3(0.80, 0.95, 1.10), smoothstep(0.45, 0.9, uNight));
 
   float grain = clamp(float(OPTION_GRAIN), 0.0, 1.0);
   if (grain > 0.0) {
