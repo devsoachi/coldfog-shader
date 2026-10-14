@@ -21,18 +21,21 @@ This shaderpack intends to make the game look like a foggy and hostile enviromen
 </table>
 
 ## Features:
-1. Pixelated effect and wobble, made for give the game a retro-like feel.
-2. Uses Chromatic Aberration, Bloom, a Blue Contrast.
-3. Everything is configurable, whether if you want a real cold feel or a more green feel.
-4. A endless fog.
+1. Pixelated, scanline and wobble effect, made for give the game a retro-like feel.
+2. Fog layer that moves within the wind.
+3. Uses Chromatic Aberration, Bloom, a Blue Contrast.
+4. Everything is configurable, whether if you want a real cold feel or a more green feel.
+5. A endless and always present fog.
 
 ## Recommended Settings:
 
 ### Pixelated effect:
 	pixel 3.0
+	scanline 0.25
 	colorbits 5.0
 	wobble 0.5
 
 ### A really constant mist:
 	Constant Mist 0.12
 	Max Visibility 0.25
+	Fog Layer: 0.65
