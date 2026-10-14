@@ -129,6 +129,24 @@ out vec4 fragColor;
 #ifndef OPTION_FOGLEVEL
 #define OPTION_FOGLEVEL 0.0
 #endif
+#ifndef OPTION_FOGLAYER
+#define OPTION_FOGLAYER 0.0
+#endif
+#ifndef OPTION_FOGHEIGHT
+#define OPTION_FOGHEIGHT 4.0
+#endif
+#ifndef OPTION_FOGSWIRL
+#define OPTION_FOGSWIRL 0.6
+#endif
+#ifndef OPTION_FOGSTEPS
+#define OPTION_FOGSTEPS 4
+#endif
+#ifndef OPTION_SCANLINE
+#define OPTION_SCANLINE 0.0
+#endif
+#ifndef OPTION_SCANLINESIZE
+#define OPTION_SCANLINESIZE 3
+#endif
 // viewpoint doesnt give another style than to put "OPTION_X"
 
 
@@ -156,6 +174,26 @@ vec3 coldFogColor(vec3 viewDir) {
   return mix(fc, vec3(fl) * tint, float(OPTION_BLUEFOG));
 }
 
+// layered ground fog density falls off with height and drifting noise carves it into banks
+float fogLayer(vec3 vd, float dist) {
+  const int N = int(OPTION_FOGSTEPS);
+  float dmax = min(dist, 60.0);                      // past this the fog is already dense
+  float H = max(float(OPTION_FOGHEIGHT), 0.5);
+  float groundY = uEye.y - 1.7;
+  float swirl = clamp(float(OPTION_FOGSWIRL), 0.0, 1.0);
+  float jit = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63));   // the grain hides the stepping
+  vec2 wind = vec2(uTime * 0.05, uTime * 0.03);
+  float tau = 0.0;
+  for (int i = 0; i < N; i++) {
+    vec3 p = uEye + vd * (dmax * (float(i) + jit) / float(N));
+    vec2 q = p.xz * 0.11 + wind;
+    float n = 0.65 * cfNoise(q) + 0.35 * cfNoise(q * 2.7 + 17.3);
+    tau += exp(-max(p.y - groundY, 0.0) / H) * mix(1.0, 2.0 * n, swirl);
+  }
+  tau *= dmax / float(N);
+  return 1.0 - exp(-tau * float(OPTION_FOGLAYER) * 0.3);
+}
+
 float lightMask(vec3 c) {
   float b = dot(c, LUMA) * uExposure * float(OPTION_EXPOSURE);
   float cut = max(float(OPTION_LIGHTCUT), 0.01);
@@ -175,6 +213,7 @@ vec3 lightHalo(vec2 uv, vec2 res) { // halo effect on lights to power when in da
   }
   return acc / 6.0;
 }
+
 
 vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
   float protect = clamp(fogK * float(OPTION_GREENFOG) * 1.2, 0.0, 1.0);
@@ -256,31 +295,37 @@ void main() {
 
   if (depth < 1.0) {
     vec3 pos = scenePos(uv, depth);
-    float dist = distance(pos, uEye);
-    float k = fogDensity(pos, dist, linearDepth(depth), fogBoostExp);
-
-    // aprox 1.7 for low fog
-    float above = max(pos.y - (uEye.y - 1.7), 0.0);
-    float low = 1.0 - exp(-dist * 0.06 * float(OPTION_LOW_FOG) * exp(-above * 0.45));
-    k = 1.0 - (1.0 - k) * (1.0 - low);
-
-    // wisps for lower fog
-    float w = cfNoise(pos.xz * 0.07 + vec2(uTime * 0.03, uTime * 0.017));
-    k = clamp(k * (1.0 + (w - 0.5) * 0.9 * float(OPTION_FOG_WISPS)), 0.0, 1.0);
-
-    float lit = lightMask(color); // the lights go into the fog
-    k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
-    k *= mix(clamp(float(OPTION_INDOORFOG), 0.0, 1.0), 1.0, smoothstep(0.5, 0.8, uEyeSky));
-
+    vec3 off = pos - uEye;
+    float dist = length(off);
+    vec3 vd = off / max(dist, 1.0e-4);
     float vis = float(OPTION_VISIBILITY);
-    if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
+    float k = 1.0;
+    if (vis > 0.0 && dist >= vis) {
+      veil = 1.0;   // past the limit nothing else matters: skip all the fog math
+    } else {
+      k = fogDensity(pos, dist, linearDepth(depth), fogBoostExp);
+
+      // aprox 1.7 for low fog
+      float above = max(pos.y - (uEye.y - 1.7), 0.0);
+      float low = 1.0 - exp(-dist * 0.06 * float(OPTION_LOW_FOG) * exp(-above * 0.45));
+      k = 1.0 - (1.0 - k) * (1.0 - low);
+
+      // wisps for lower fog
+      float w = cfNoise(pos.xz * 0.07 + vec2(uTime * 0.03, uTime * 0.017));
+      k = clamp(k * (1.0 + (w - 0.5) * 0.9 * float(OPTION_FOG_WISPS)), 0.0, 1.0);
+
+      if (float(OPTION_FOGLAYER) > 0.0) k = 1.0 - (1.0 - k) * (1.0 - fogLayer(vd, dist));
+
+      float lit = lightMask(color); // the lights go into the fog
+      k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
+      k *= mix(clamp(float(OPTION_INDOORFOG), 0.0, 1.0), 1.0, smoothstep(0.5, 0.8, uEyeSky));
+
+      if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
+    }
     fogK = k;
-    vec3 vd = normalize(pos - uEye);
     fogHdr = coldFogColor(normalize(vec3(vd.x, vd.y * (1.0 - k), vd.z) + vec3(0.0, 0.0, 1.0e-4)));
+    color = mix(color, fogHdr, k);
   } else if (float(OPTION_SKY_FOG) > 0.0) {
-    vec3 pos = scenePos(uv, depth);
-    float dist = distance(pos, uEye);
-    float k = fogDensity(pos, dist, linearDepth(depth), fogBoostExp);
     vec3 dir = normalize(scenePos(uv, 0.5) - uEye);
     float ref = float(OPTION_SKY_FOG_DISTANCE);
     float tauSky = cfMistDepth(uMist * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), max(dir.y, 1.0e-3), 1.0e6);
@@ -288,7 +333,6 @@ void main() {
     weather = pow(clamp(weather, 0.0, 1.0), fogBoostExp);
     float km = 1.0 - exp(-ref * float(OPTION_MIST));
     float vis = float(OPTION_VISIBILITY);
-    if (vis > 0.0) { veil = smoothstep(vis * 0.55, vis, dist); k = max(k, veil); }
     float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, km), max(dir.y, 0.0));
     float skyK = (1.0 - (1.0 - weather) * (1.0 - km * shape)) * clamp(float(OPTION_SKY_FOG), 0.0, 1.0);
 
@@ -321,12 +365,20 @@ void main() {
   color = tone(purkinje(max(color * uExposure * float(OPTION_EXPOSURE), vec3(0.0))), toneLuma);
 
   color *= 1.0 + float(OPTION_FOGLIFT) * fogK;   // brighter fog, after the eye has adapted to it
-
+  
   // cold grading for more saturated blues
   color = mix(color, coldGrade(color, vUv, fogK), clamp(float(OPTION_BLUE), 0.0, 1.0));
 
   float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
   if (dv > 0.0) color += dv * 0.07 * (1.0 - smoothstep(0.0, 0.25, dot(color, LUMA))) * mix(vec3(1.0), vec3(0.80, 0.95, 1.10), smoothstep(0.45, 0.9, uNight));
+
+  float scan = clamp(float(OPTION_SCANLINE), 0.0, 1.0); // crt-like effect
+  if (scan > 0.0) {   // CRT: dark gaps between lines, bright areas bleed into them
+    float row = floor(gl_FragCoord.y) / max(float(OPTION_SCANLINESIZE), 1.0);
+    float beam = 0.5 + 0.5 * cos(6.2831853 * row);          // 1 on the line, 0 in the gap
+    float gap = scan * (1.0 - beam) * (1.0 - 0.5 * clamp(dot(color, LUMA) * 2.0, 0.0, 1.0));
+    color *= (1.0 - gap) * (1.0 + 0.3 * scan);
+  }
 
   float grain = clamp(float(OPTION_GRAIN), 0.0, 1.0);
   if (grain > 0.0) {
