@@ -1,6 +1,6 @@
 #version 330
 
-// coldFog shaderpack made for viewpoint, it gives blue-green tinted dense fog, heavy fog depending on settings
+// coldFog shaderpack made for viewpoint, it gives blue-green tinted dense fog, heavy fog depending on setting (using wisps, low fog and bayer calculations)
 // also uses film grain, dithering, chromatic aberration and optional reduced color depth
 
 in vec2 vUv;
@@ -99,6 +99,12 @@ out vec4 fragColor;
 #ifndef OPTION_PENETRATION
 #define OPTION_PENETRATION 0.6
 #endif
+#ifndef OPTION_SODIUM
+#define OPTION_SODIUM 0.0
+#endif
+#ifndef OPTION_GLARE
+#define OPTION_GLARE 0.0
+#endif
 #ifndef OPTION_HALO
 #define OPTION_HALO 1.0
 #endif
@@ -189,7 +195,7 @@ float fogDensity(vec3 pos, float dist, float linDepth, float boostExp) {
 }
 
 vec3 coldFogColor(vec3 viewDir) {
-  vec3 fc = fogColor(uFogColor, viewDir);
+  vec3 fc = skyColor(viewDir, uFogColor, uZenith, uSkySun, vec3(0.0), 0.0) * SKY_BRIGHTNESS;   // the sky colour with no sun or moon glare in it
   float fl = dot(fc, LUMA);
   vec3 tint = mix(vec3(0.90, 0.98, 1.08), vec3(0.97, 1.03, 0.86), clamp(float(OPTION_GREENFOG), 0.0, 1.0));
   return mix(fc, vec3(fl) * tint, float(OPTION_BLUEFOG));
@@ -220,7 +226,7 @@ float cfLumps(vec2 p, float t) {
   return clamp(2.0 * (0.65 * a + 0.35 * b), 0.0, 1.0);
 }
 
-//everything sinks into brown, like rust or rot. warm 0: normal, 1: rust
+// everything sinks into brown, like rust or rot. warm 0: normal, 1: rust
 vec3 cfStain(vec3 c, float amount, float warm) {
   float l = dot(c, LUMA);
   vec3 tint = mix(vec3(1.12, 1.00, 0.60), vec3(1.32, 0.88, 0.56), warm);
@@ -229,8 +235,9 @@ vec3 cfStain(vec3 c, float amount, float warm) {
   return mix(c, stained, amount);
 }
 
-// fog domes, one per cell of a grid. The fog gets thicker the longer the sight line runs inside one exponentially, so it ends up as the flat color, and a dome is a wall the light has to cross.
+// fog domes, one per cell of a grid. The fog gets thicker the longer the sight line runs inside one exponentially.
 const vec3 DOME_COLOR[4] = vec3[4](vec3(0.596, 0.624, 0.588), vec3(0.741, 0.804, 0.784), vec3(0.753, 0.816, 0.788), vec3(0.792, 0.851, 0.824));
+const vec3 SODIUM_HUE = vec3(1.0, 0.62, 0.20) / 0.6704;   // the amber of a sodium lamp, with its brightness taken out (0.6704 is the luma of 1.0, 0.62, 0.20)
 const vec3 DOME_FAR = vec3(0.792, 0.851, 0.824);
 const float DOME_DENSITY = 6.0;
 const float DOME_BOUND = 1.3;
@@ -238,7 +245,7 @@ const float DOME_TURB = 0.8;
 const float DOME_HUG = 0.6;
 const float DOME_WALL = 0.6;  
 
-// it is pushed round in circles and up it runs along the ground and climbs
+// it is pushed round in circles
 vec3 cfCurrent(vec3 p) {
   float amount = float(OPTION_FOGCURRENT);
   vec2 rel = p.xz - uEye.xz;
@@ -252,7 +259,6 @@ vec3 cfCurrent(vec3 p) {
 }
 
 // tau: how much fog the ray meets, tint: the colour of it, walls: how many dome walls it crosses
-// wallness: 0 where the ray ends on a floor, 1 on a wall, the fog gathers against walls, like liquid
 void cfDomes(vec3 vd, float dist, float wallness, out float tau, out vec3 tint, out float walls) {
   tau = 0.0;
   tint = vec3(0.0);
@@ -310,7 +316,7 @@ void cfDomes(vec3 vd, float dist, float wallness, out float tau, out vec3 tint, 
   tint = tau > 1.0e-5 ? tint / tau : DOME_FAR;
 }
 
-// layered ground fog density falls off with height and drifting noise carves it into banks
+// layered ground fog density
 float fogLayer(vec3 vd, float dist) {
   const int N = int(OPTION_FOGSTEPS);
   float dmax = min(dist, 60.0);                      // past this the fog is already dense
@@ -364,15 +370,16 @@ vec3 coldGrade(vec3 c, vec2 uv, float fogK) {
   float l = dot(c, LUMA);
   c = mix(vec3(l), c, sat);
 
-  // take off warm residual and take it to the blue tone
-  float warm = max(c.r - max(c.g, c.b), 0.0) * float(OPTION_WARMDOWN) * smoothstep(0.45, 0.9, uNight);
+  // take off warm residual and take it to the blue tone, but strong light doesn't get affected
+  float keep = smoothstep(0.3, 0.6, (c.r - c.b) / max(c.r, 1.0e-4));
+  float warm = max(c.r - max(c.g, c.b), 0.0) * float(OPTION_WARMDOWN) * smoothstep(0.45, 0.9, uNight) * (1.0 - keep);
   c.r -= warm;
   c.g += warm * 0.12;
   c.b += warm * 0.80;
 
   l = dot(c, LUMA);
   vec3 tint = mix(vec3(0.70, 0.88, 1.05), vec3(0.92, 0.98, 1.02), smoothstep(0.0, 0.7, l));
-  c *= mix(vec3(1.0), tint, cool);
+  c *= mix(vec3(1.0), tint, cool * (1.0 - keep));
 
    vec3 contrasted = (c - 0.45) * float(OPTION_BLUECONTRAST) + 0.45;
   c = mix(c, contrasted, smoothstep(0.0, 0.3, dot(c, LUMA)));
@@ -435,6 +442,7 @@ void main() {
   vec3 fogHdr = vec3(0.0);
   float dispK = 0.0;                      // how much of the final is the dome colors
   vec3 dispColor = DOME_FAR;
+  float sodiumK = 0.0;                    // how much a lamp is the light of this pixel: 0 nothing, 1 it is all amber
   float wallness = 0.0;                   // 0 on a floor, 1 on a wall
   if (float(OPTION_DOMES) > 0.0) {
     vec3 sp = scenePos(uv, depth);
@@ -476,7 +484,14 @@ void main() {
       if (float(OPTION_FOGLAYER) > 0.0) k = 1.0 - (1.0 - k) * (1.0 - fogLayer(vd, dist));
 
       float lit = lightMask(color); // the lights go into the fog
+      // what a lamp lights is amber
+      float warmth = (color.r - color.b) / max(color.r, 1.0e-4);
+      float gOverR = color.g / max(color.r, 1.0e-4);
+      float lampLit = smoothstep(0.55, 0.8, warmth) * smoothstep(0.25, 0.45, gOverR) * (1.0 - smoothstep(1.3, 1.8, gOverR))
+                    * smoothstep(0.03, 0.2, dot(color, LUMA) * uExposure * float(OPTION_EXPOSURE)) * smoothstep(0.45, 0.9, uNight);
+      sodiumK = lampLit;
       k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
+      k *= 1.0 - 0.85 * lampLit;
       k *= mix(clamp(float(OPTION_INDOORFOG), 0.0, 1.0), 1.0, smoothstep(0.5, 0.8, uEyeSky));
 
       float domeShow = 0.0;
@@ -489,6 +504,7 @@ void main() {
         float domeK = (1.0 - exp(-domeTau)) * outside;
         // a light is not hidden like the rest
         domeShow = mix(domeK, (1.0 - pow(DOME_WALL, domeWalls)) * outside, lit * clamp(float(OPTION_PENETRATION), 0.0, 1.0));
+        domeShow *= 1.0 - 0.85 * lampLit;   // so the fog doesn't cover the light entirely
         float farK = smoothstep(1.2 * float(OPTION_DOMESIZE), 2.5 * float(OPTION_DOMESIZE), dist) * outside;
         domeTint = mix(domeTint, DOME_FAR, farK);
         domeShow = 1.0 - (1.0 - domeShow) * (1.0 - farK);
@@ -541,22 +557,37 @@ void main() {
 #if PIPELINE_SUN_SHAFTS
   glow += texture(uSunShafts, uv).rgb * uShaftStrength * seen;
 #endif
-  if (uBloomStrength > 0.0) glow += texture(uBloom, uv).rgb * uBloomStrength * float(OPTION_GLOW) * seen;
-  if (float(OPTION_HALO) > 0.0 && uBloomStrength > 0.0) {
+  if (uBloomStrength > 0.0) {
     vec3 hb = texture(uBloom, uv).rgb;
-    glow += hb * lightMask(hb * 0.2) * float(OPTION_HALO) * fogK * 0.25 * seen;   // 0.2: the bloom is the sum of 5 levels
+    glow += hb * uBloomStrength * float(OPTION_GLOW) * seen;
+    if (float(OPTION_HALO) > 0.0) glow += hb * lightMask(hb * 0.2) * float(OPTION_HALO) * fogK * 0.25 * seen;   // 0.2: the bloom is the sum of 5 levels
+
+    // glare
+    if (float(OPTION_GLARE) > 0.0) {
+      vec3 gb = hb * 0.2;
+      float gLuma = dot(gb, LUMA) * uExposure * float(OPTION_EXPOSURE);        // how bright it looks
+      float gWarm = smoothstep(0.55, 0.8, (gb.r - gb.b) / max(gb.r, 1.0e-6)) * smoothstep(0.45, 0.9, uNight);
+      float gMask = max(lightMask(gb * 3.0), gWarm * lightMask(gb * 12.0)) * smoothstep(0.45, 0.9, uNight);
+
+      vec3 gHue = gb / max(dot(gb, LUMA), 1.0e-6);
+      float ring = 1.0 + 0.18 * cos(log2(max(gLuma, 1.0e-4)) * 5.6);
+      float gAmount = pow(gLuma, 0.65) * ring * gMask * float(OPTION_GLARE) * 0.12 * seen;
+      glow += gHue * gAmount / max(uExposure * float(OPTION_EXPOSURE), 1.0e-3);
+    }
   }
 
-  // bloom, halo, shafts and the fog light all feed on the same bright pixels, better saturate them
-  const float GLOW_MAX = 0.5;   // the most light all of them together can add, already exposed
+  // bloom, halo, shafts and the fog light all feed on the same bright pixel
+  const float GLOW_MAX = 0.5;
   float glowLuma = min(dot(glow, LUMA) * uExposure * float(OPTION_EXPOSURE), 1.0e4) / GLOW_MAX;
   color += glow * inversesqrt(1.0 + glowLuma * glowLuma);
+  float glowFrac = glowLuma * inversesqrt(1.0 + glowLuma * glowLuma);
 
   // the tone curve cuts everything above 2.0 to flat white
   vec3 exposed = max(color * uExposure * float(OPTION_EXPOSURE), vec3(0.0));
   float el = dot(exposed, LUMA);
   const float KNEE = 0.6, TOP = 1.4;
   float lim = el > KNEE ? KNEE + (TOP - KNEE) * (1.0 - exp(-(el - KNEE) / (TOP - KNEE))) : el;
+  lim = mix(lim, 2.0, smoothstep(40.0, 200.0, el));
   exposed *= lim / max(el, 1.0e-6);
   float toneLuma;
   color = tone(purkinje(exposed), toneLuma);
@@ -569,9 +600,19 @@ void main() {
   float stainK = clamp(float(OPTION_STAIN), 0.0, 1.0) * stainGate;
   if (stainK > 0.0) color = cfStain(color, stainK, clamp(float(OPTION_STAINWARM), 0.0, 1.0));
 
+  // sodium light
+  if (float(OPTION_SODIUM) > 0.0 && sodiumK > 0.0) {
+    float sl = dot(color, LUMA);
+    float strength = clamp(float(OPTION_SODIUM) * sodiumK, 0.0, 1.0);
+    vec3 amber = SODIUM_HUE * sl * (1.0 + 0.6 * float(OPTION_SODIUM) * sodiumK);
+    amber = mix(amber, vec3(1.0), smoothstep(0.85, 1.0, sl));   // the very core is white hot
+    color = mix(color, amber, strength);
+  }
+
   if (float(OPTION_DOMES) > 0.0) {
-    float nightDome = mix(1.0, 0.12, smoothstep(0.45, 0.9, uNight));   // those colours are the ones of the day
-    color = mix(color, dispColor * nightDome, dispK);
+    float nightK = smoothstep(0.45, 0.9, uNight);
+    float nightDome = mix(1.0, 0.12, nightK);
+    color = mix(color, dispColor * nightDome, dispK * (1.0 - 0.8 * glowFrac * nightK));
   }
 
   float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
