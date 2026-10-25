@@ -1,4 +1,4 @@
-# soachi's coldFog v1.0 | shader pack for Project Viewpoint
+# soachi's coldFog v1.1 | shader pack for Project Viewpoint
 
 <div align="center"><img width="569" height="112" alt="coldfog" src="https://github.com/user-attachments/assets/6671372f-a06a-4bc5-a439-d9572a3d478c" /></div>
 
