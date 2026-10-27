@@ -25,7 +25,7 @@ float cfNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// bayer 4x4 ordered dithering matrix, returns a float in [0, 1)
+// bayer 4x4 dithering
 float cfBayer4(ivec2 p) {
   const float M[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
   return (M[(p.y & 3) * 4 + (p.x & 3)] + 0.5) / 16.0;
