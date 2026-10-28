@@ -172,16 +172,19 @@ void main() {
         color = mix(color, color * vec3(0.42, 0.30, 0.20), smoothstep(0.35, 0.9, g) * spots);
       }
 
-      veil = smoothstep(vis * 0.55, vis, distN);
+      veil = smoothstep(vis * 0.35, vis, distN);
       k = max(k, veil);
       dispK = 1.0 - (1.0 - domeShow) * (1.0 - veil);
       dispColor = mix(DOME_FAR, domeTint, domeShow / max(domeShow + veil, 1.0e-4));
     }
     fogK = k;
+    float fogPaint = wx * smoothstep(0.5, 0.97, k);   // the fog gives way to the sky colour so far things melt into it
+    dispColor = mix(dispColor, DOME_FAR, fogPaint);
+    dispK = max(dispK, fogPaint);
     fogHdr = cfFogColor(normalize(vec3(vd.x, vd.y * (1.0 - k), vd.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint;
     color = mix(color, fogHdr, k);
   } else {
-    vec3 dir = normalize(scenePos(uv, 0.5) - uEye);
+    vec3 dir = normalize(scenePos(uv, 0.999) - scenePos(uv, 0.5)); 
     const float REF = 120.0;   // the distance the sky fog is judged at
     float skyBase = cfSkyFog(dir, REF);
     veil = smoothstep(visDay * 0.55, visDay, REF);
@@ -198,7 +201,7 @@ void main() {
 
   // fog level, how bright the fog is whatever the sky does
   float fl = max(dot(fogHdr, LUMA) * uExposure * float(OPTION_EXPOSURE), 1.0e-3);
-  float want = 0.4 * mix(1.0, 0.1, cfNight());
+  float want = 0.4 * mix(1.0, 0.1, cfNightAll());
   color += fogHdr * (clamp(want / fl, 0.25, 8.0) - 1.0) * fogK;
 
   float seen = 1.0 - veil;
@@ -224,7 +227,7 @@ void main() {
   float toneLuma;
   color = tone(purkinje(cfExpose(color)), toneLuma);
 
-  color *= 1.0 + 0.5 * fogK * (1.0 - smoothstep(0.6, 0.9, dot(color, LUMA)));   // brighter fog
+  color *= 1.0 + (depth < 1.0 ? 0.5 : 0.5 * wx) * fogK * (1.0 - smoothstep(0.6, 0.9, dot(color, LUMA)));    // brighter fog
 
   // cold grading for more saturated blues
   color = mix(color, cfGrade(color, vUv, fogK), clamp(float(OPTION_BLUE), 0.0, 1.0));
@@ -236,9 +239,10 @@ void main() {
   if (float(OPTION_SODIUM) > 0.0 && sodiumK > 0.0) color = cfSodium(color, sodiumK);
 
   if (domeAmt > 0.0) {
-    float nightK = cfNight();
+    float nightK = cfNightAll();
     float nightDome = mix(1.0, 0.0, nightK);   // black at night
-    color = mix(color, min(dispColor * dayTint, vec3(1.0)) * nightDome, dispK * (1.0 - 0.8 * glowFrac * nightK));
+    float veilGain = depth < 1.0 ? mix(1.0, mix(CF_VEIL_LOW, CF_VEIL_HIGH, smoothstep(0.06, 0.31, uRainStrength)), wx) : 1.0;
+    color = mix(color, min(dispColor * dayTint * veilGain, vec3(1.0)) * nightDome, dispK * (1.0 - 0.8 * glowFrac * nightK));
   }
 
   float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
