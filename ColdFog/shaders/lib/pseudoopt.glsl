@@ -1,4 +1,4 @@
-// pseudoopt library for coldFog, made by soachi | fallback value of every option and the shared constants
+// options with their value
 #ifndef PSEUDOOPT
 #define PSEUDOOPT
 
@@ -103,6 +103,10 @@ const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
 float cfNight() {
   return smoothstep(0.45, 0.9, uNight) * smoothstep(0.5, 0.8, uEyeSky);
+}
+
+float cfNightAll() {
+  return smoothstep(0.45, 0.9, uNight);
 }
 
 #endif
