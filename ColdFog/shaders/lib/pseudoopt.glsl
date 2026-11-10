@@ -14,6 +14,9 @@
 #ifndef OPTION_DAYLOOK
 #define OPTION_DAYLOOK 1.0
 #endif
+#ifndef OPTION_DIMRAIN
+#define OPTION_DIMRAIN 0.0
+#endif
 #ifndef OPTION_SUN
 #define OPTION_SUN 1.0
 #endif
@@ -97,6 +100,9 @@
 #endif
 #ifndef OPTION_SCANLINESIZE
 #define OPTION_SCANLINESIZE 3
+#endif
+#ifndef OPTION_LIGHTCONE
+#define OPTION_LIGHTCONE 0.0
 #endif
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
