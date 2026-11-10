@@ -40,6 +40,15 @@ vec3 cfGrade(vec3 c, vec2 uv, float fogK) {
   return clamp(c, 0.0, 1.0);
 }
 
+vec3 cfRainDim(vec3 c, float k) {
+  float l = dot(c, LUMA);
+  c = mix(vec3(l), c, mix(1.0, CF_RAIN_SAT, k));
+  float lamp = cfNight() * smoothstep(0.5, 0.9, l);
+  c *= mix(1.0, CF_RAIN_GAIN, k * (1.0 - lamp));
+  c *= mix(vec3(1.0), vec3(0.94, 0.99, 1.04), k);
+  return c;
+}
+
 // everything sinks into brown like rust or rot, warm 0 is plain and 1 is rust
 vec3 cfStain(vec3 c, float amount, float warm) {
   float l = dot(c, LUMA);
