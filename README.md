@@ -11,12 +11,14 @@ This shaderpack intends to make the game look like a foggy and hostile enviromen
 
 <table align="center" width="100%">
   <tr>
-    <td width="50%"><img width="1920" height="1080" alt="shot-1791910841660" src="https://github.com/user-attachments/assets/a9fa03ad-6970-4840-a9d0-b9007df00ca2" /></td>
-    <td width="50%"><img width="1920" height="1080" alt="shot-1791595066215" src="https://github.com/user-attachments/assets/a32ad2f3-531e-43c6-8e6f-f03cee8fde8c" /></td>
+    <td width="50%"><img width="1920" height="1080" alt="shot-1793289869107" src="https://github.com/user-attachments/assets/4724af16-e0fd-42d5-8c6c-e625e1deeca0" /></td>
+
+" /></td>
+    <td width="50%"><img width="1920" height="1080" alt="shot-1793658466271" src="https://github.com/user-attachments/assets/3fdb047f-45db-49b3-93d3-aa72f524fe5e" /></td>
   </tr>
   <tr>
-    <td width="50%"><img width="1920" height="1080" alt="shot-1791908650885" src="https://github.com/user-attachments/assets/c329fbdf-0a60-4f1a-b22f-8c7ac3450c6d" /></td>
-    <td width="50%"><img width="1920" height="1080" alt="imagen" src="https://github.com/user-attachments/assets/1de8383f-9224-424d-a3da-bf3592b8ed7f" /></td>
+    <td width="50%"><img width="1920" height="1080" alt="shot-1794336440599" src="https://github.com/user-attachments/assets/9dc211e2-00dd-40eb-9a93-57f4c47bc496" /></td>
+    <td width="50%"><img width="1920" height="1080" alt="shot-1794336661251" src="https://github.com/user-attachments/assets/281a717b-da4e-4e13-911d-500050a8af34" /></td>
   </tr>
 </table>
 
