@@ -1,6 +1,8 @@
-// pseudonoise library for coldFog, made by soachi | own simplex noise and the lumpy field, needs pseudofog_light first
+// noise and grain library
 #ifndef PSEUDONOISE
 #define PSEUDONOISE
+
+float cfJit;
 
 vec2 cfGrad(vec2 i) {
   return vec2(cfHash21(i), cfHash21(i + vec2(17.3, -9.1))) * 2.0 - 1.0;
