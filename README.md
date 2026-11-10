@@ -12,8 +12,6 @@ This shaderpack intends to make the game look like a foggy and hostile enviromen
 <table align="center" width="100%">
   <tr>
     <td width="50%"><img width="1920" height="1080" alt="shot-1793289869107" src="https://github.com/user-attachments/assets/4724af16-e0fd-42d5-8c6c-e625e1deeca0" /></td>
-
-" /></td>
     <td width="50%"><img width="1920" height="1080" alt="shot-1793658466271" src="https://github.com/user-attachments/assets/3fdb047f-45db-49b3-93d3-aa72f524fe5e" /></td>
   </tr>
   <tr>
