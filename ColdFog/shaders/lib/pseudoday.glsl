@@ -41,7 +41,7 @@ vec3 cfDayTint(CfDay d, float weather) {
   t = mix(t, orange, d.sunset * k);
   t = mix(t, violet, d.dawn * k);
   t = mix(t, plum, d.dusk * k);
-  return mix(t, t * ice, d.cold * k * 0.8);
+  return mix(t, t * ice, d.cold * k * 0.8 * (1.0 - 0.6 * cfOvercast()));
 }
 
 // rich colour at dawn and dusk, drained colour in the cold afternoon
@@ -54,10 +54,12 @@ vec3 cfDayGrade(vec3 c, CfDay d, float weather) {
 
 // the sun disc and a soft glow around it, dir is the view direction, it is only added where there is sky
 vec3 cfSun(vec3 dir, CfDay d, float weather) {
+  float up = smoothstep(-0.05, 0.05, uSkySun.y) * (1.0 - smoothstep(0.1, 0.5, uNight));
+  if (up <= 0.0) return vec3(0.0);
   float c = dot(dir, normalize(uSkySun));
+  if (c < 0.9) return vec3(0.0);   // too far from the sun for the disc or its glow to show
   float disc = smoothstep(0.99985, 0.99995, c);
   float glow = pow(max(c, 0.0), 220.0) * 0.04;
-  float up = smoothstep(-0.05, 0.05, uSkySun.y) * (1.0 - smoothstep(0.1, 0.5, uNight));
   vec3 col = mix(vec3(1.0, 0.92, 0.72), vec3(1.0, 0.50, 0.18), d.sunset);
   return col * (disc + glow) * 40.0 * up * (1.0 - 0.9 * weather) * float(OPTION_SUN);
 }
