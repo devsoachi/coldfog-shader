@@ -3,6 +3,10 @@
 #define PSEUDOLIGHT
 
 const vec3 SODIUM_HUE = vec3(1.0, 0.62, 0.20) / 0.6704;   // sodium lamp
+const float CF_CONE_LOW = 0.015;
+const float CF_CONE_FLOOR = 0.06;
+const float CF_CONE_GAIN = 1.0;
+
 
 float cfMask(vec3 c) {
   float b = dot(c, LUMA) * uExposure * float(OPTION_EXPOSURE);
@@ -35,6 +39,14 @@ vec3 cfGlare(vec3 hb) {
   float ring = 1.0 + 0.18 * cos(log2(max(gLuma, 1.0e-4)) * 5.6);
   float gAmount = pow(gLuma, 0.65) * ring * gMask * float(OPTION_GLARE) * 0.12;
   return gHue * gAmount / max(uExposure * float(OPTION_EXPOSURE), 1.0e-3);
+}
+
+vec3 cfCone(vec3 v) {
+  float k = max(uExposure * float(OPTION_EXPOSURE), 1.0e-3);
+  float luma = dot(v, LUMA);
+  float inside = smoothstep(CF_CONE_LOW, CF_CONE_LOW * 2.0, luma * k);
+  vec3 hue = v / max(luma, 1.0e-6);
+  return hue * ((CF_CONE_FLOOR + luma * k * CF_CONE_GAIN) / k) * inside;
 }
 
 vec3 cfSodium(vec3 c, float lampK) {
