@@ -15,7 +15,6 @@ uniform vec2 uFogRange;
 uniform vec2 uHaze;
 uniform float uTime;
 uniform int uFrame;
-uniform float uMist;
 uniform float uRainStrength;
 uniform float uSnowStrength;
 uniform float uEyeSky;
@@ -32,6 +31,11 @@ out vec4 fragColor;
 #include "lib/camera.glsl"
 #include "lib/common.glsl"
 #include "lib/fog.glsl"
+
+#ifndef DEFAULT_MIST
+uniform float uMist;
+#endif
+
 #include "lib/fog_amount.glsl"
 #include "lib/eye_meter.glsl"
 #include "lib/purkinje.glsl"
@@ -45,9 +49,11 @@ out vec4 fragColor;
 #include "lib/pseudolight.glsl"
 #include "lib/pseudograde.glsl"
 #include "lib/pseudotest.glsl"
+#include "lib/pseudopelusa.glsl"
 
 void main() {
   // pixel effect and wobble
+  cfJit = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63));
   vec2 res = vec2(textureSize(uColor, 0));
   float px = max(1.0, floor(float(OPTION_PIXEL) + 0.5));
   vec2 uv = vUv;
@@ -77,23 +83,31 @@ void main() {
   if (uDebugView != 0) { fragColor = vec4(color, 1.0); return; }
   if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
 
-  vec4 volume = mix(vec4(0.0, 0.0, 0.0, 1.0), texture(uVolume, uv), uVolumeOn);
+  vec4 volume = vec4(0.0, 0.0, 0.0, 1.0);
+  if (uVolumeOn > 0.0) volume = mix(volume, texture(uVolume, uv), uVolumeOn);
   if (any(isnan(volume)) || any(isinf(volume))) volume = vec4(0.0, 0.0, 0.0, 1.0);
 
   float depth = texture(uDepth, uv).r;
-  color = color * volume.a + volume.rgb;
+  vec3 air = volume.rgb;
+  color = color * volume.a + air;
 
   // weather, time of day and the amount of each fog
   float wx = cfWeather();
   CfDay day = cfDayPhase();
-  vec3 dayTint = cfDayTint(day, wx);
+  float rainK = cfRainAmt();
+  float wd = max(wx, rainK);
+  vec3 dayTint = cfDayTint(day, wd);
+  float fogCut = (CF_CUT_MORNING * day.morning + CF_CUT_AFTERNOON * day.cold) * (1.0 - wx);   // less fog in clear weather
+  float mute = clamp(fogCut * CF_MUTE_GAIN, 0.0, 1.0);
+  float night = cfNight();
   float modern = clamp(float(OPTION_MODERN), 0.0, 1.0);
   float classic = clamp(float(OPTION_CLASSIC), 0.0, 1.0);
   float classicAmt = classic * wx;
   float layerAmt = 0.4 * classicAmt + modern * mix(0.05, 0.22, wx);   // clouds on the ground
   float domeAmt = modern * mix(DOME_CLEAR, 1.0, wx);
-  float vis = cfVis(wx);
-  float visDay = cfVisDay(wx);
+  float visW = clamp(wx + CF_RAIN_VIS * rainK, 0.0, 1.0);   // the sight limit of the rain
+  float vis = cfVis(visW);
+  float visDay = cfVisDay(visW);
   color *= dayTint;
 
   float fogK = 0.0;
@@ -104,18 +118,21 @@ void main() {
   vec3 dispColor = DOME_FAR;
   float sodiumK = 0.0;                    // how much a lamp is the light of this pixel
   float wallness = 0.0;
+  vec3 sp = (domeAmt > 0.0 || depth < 1.0) ? scenePos(uv, depth) : vec3(0.0);   // the world position is read once
   if (domeAmt > 0.0) {
-    vec3 sp = scenePos(uv, depth);
     vec3 dpx = dFdx(sp);
     vec3 dpy = dFdy(sp);
-    vec3 sn = derivativeNormal(dpx, dpy, vec3(0.0, 1.0, 0.0));
-    float trust = 1.0 - smoothstep(0.1, 0.4, (length(dpx) + length(dpy)) / max(distance(sp, uEye), 1.0e-3));   // at the edge of an object the normal is nothing
-    wallness = depth < 1.0 ? (1.0 - abs(sn.y)) * trust : 0.0;
+    if (depth < 1.0) {
+      vec3 sn = derivativeNormal(dpx, dpy, vec3(0.0, 1.0, 0.0));
+      float trust = 1.0 - smoothstep(0.1, 0.4, (length(dpx) + length(dpy)) / max(distance(sp, uEye), 1.0e-3));   // at the edge of an object the normal is nothing
+      wallness = (1.0 - abs(sn.y)) * trust;
+    }
   }
-  float stainGate = mix(1.0, cfNight(), clamp(float(OPTION_STAINNIGHT), 0.0, 1.0));;  // 1 always on and 0 off
+
+  float stainGate = mix(1.0, night, clamp(float(OPTION_STAINNIGHT), 0.0, 1.0));  // 1 always on and 0 off
 
   if (depth < 1.0) {
-    vec3 pos = scenePos(uv, depth);
+    vec3 pos = sp;
     vec3 off = pos - uEye;
     float dist = length(off);
     vec3 vd = off / max(dist, 1.0e-4);
@@ -142,13 +159,14 @@ void main() {
 
       if (layerAmt > 0.0) k = 1.0 - (1.0 - k) * (1.0 - cfLayer(vd, dist, layerAmt, clump));
 
-            float lit = mix(cfMask(color), cfEmit(color), cfNight());   // the lights go into the fog
-      color *= 1.0 - smoothstep(CF_NIGHT_NEAR, CF_NIGHT_FAR, dist) * cfNight() * (1.0 - lit);
-      float lampLit = cfLamp(color);   // what a lamp lights is amber
+      float lit = night > 0.0 ? mix(cfMask(color), cfEmit(color), night) : cfMask(color);   // the lights go into the fog
+      if (night > 0.0) color *= 1.0 - smoothstep(CF_NIGHT_NEAR, CF_NIGHT_FAR, dist) * night * (1.0 - lit);
+      float lampLit = night > 0.0 ? cfLamp(color) : 0.0;   // what a lamp lights is amber
       sodiumK = lampLit;
       k *= 1.0 - clamp(float(OPTION_PENETRATION), 0.0, 1.0) * lit;
       k *= 1.0 - 0.85 * lampLit;
       k *= mix(CF_INDOOR, 1.0, smoothstep(0.5, 0.8, uEyeSky));
+      k *= 1.0 - fogCut;
 
       float domeShow = 0.0;
       vec3 domeTint = DOME_FAR;
@@ -166,6 +184,7 @@ void main() {
         domeShow = 1.0 - (1.0 - domeShow) * (1.0 - farK);
       }
 
+      domeShow *= 1.0 - fogCut;
       float spots = clamp(float(OPTION_STAINSPOTS), 0.0, 1.0) * stainGate * (1.0 - lit);
       if (spots > 0.0) {   // stains spots
         float g = cfLumps(vec2(pos.x + pos.y * 0.7, pos.z + pos.y * 0.45) / 3.0 + 91.0, 0.0);
@@ -178,10 +197,10 @@ void main() {
       dispColor = mix(DOME_FAR, domeTint, domeShow / max(domeShow + veil, 1.0e-4));
     }
     fogK = k;
-    float fogPaint = wx * smoothstep(0.5, 0.97, k);   // the fog gives way to the sky colour so far things melt into it
+    float fogPaint = clamp(2.0 * cfFogWeather(), 0.0, 1.0) * smoothstep(0.4, 0.97, k);   // the fog gives way to the sky colour so far things melt into it
     dispColor = mix(dispColor, DOME_FAR, fogPaint);
     dispK = max(dispK, fogPaint);
-    fogHdr = cfFogColor(normalize(vec3(vd.x, vd.y * (1.0 - k), vd.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint;
+    fogHdr = cfMute(cfFogColor(normalize(vec3(vd.x, vd.y * (1.0 - k), vd.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint, mute);
     color = mix(color, fogHdr, k);
   } else {
     vec3 dir = normalize(scenePos(uv, 0.999) - scenePos(uv, 0.5)); 
@@ -189,19 +208,23 @@ void main() {
     float skyBase = cfSkyFog(dir, REF);
     veil = smoothstep(visDay * 0.55, visDay, REF);
     skyBase = max(skyBase, veil);
-    float skyK = max(skyBase, cfHorizon(dir));   // the horizon band covers far scenery
+    float skyK = max(skyBase, cfHorizon(dir)) * (1.0 - fogCut);   // the horizon band covers far scenery
     fogK = skyK;
-    fogHdr = cfFogColor(normalize(vec3(dir.x, dir.y * (1.0 - skyK), dir.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint;
+    fogHdr = cfMute(cfFogColor(normalize(vec3(dir.x, dir.y * (1.0 - skyK), dir.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint, mute);
     color = mix(color, fogHdr, skyK);
-    color += cfSun(dir, day, wx);
-    dispK = skyK;
+    color += cfSun(dir, day, wd);
+    float skyUp = smoothstep(0.0, 0.8, max(dir.y, 0.0));
+    float skyFogW = cfFogWeather();
+    float skyBand = clamp(3.0 * skyFogW, 0.0, 1.0) * (1.0 - smoothstep(0.14, 0.45, max(dir.y, 0.0)));   // the sky beside the far veil takes its colour in full
+    dispK = max(skyK, (1.0 - cfNightAll()) * max(clamp(2.0 * skyFogW, 0.0, 1.0) * skyUp, skyBand));
+    dispColor = DOME_FAR * mix(1.0, CF_SKY_TOP, skyUp);   // the sky gets darker going up so it has a gradient
   }
 
   if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
 
   // fog level, how bright the fog is whatever the sky does
   float fl = max(dot(fogHdr, LUMA) * uExposure * float(OPTION_EXPOSURE), 1.0e-3);
-  float want = 0.4 * mix(1.0, 0.1, cfNightAll());
+  float want = 0.4 * mix(1.0, 0.1, cfNightAll()) * mix(1.0, 0.75, rainK) * mix(1.0, CF_OVERCAST_DIM, cfOvercast()) * mix(1.0, CF_MUTE_DIM, mute);
   color += fogHdr * (clamp(want / fl, 0.25, 8.0) - 1.0) * fogK;
 
   float seen = 1.0 - veil;
@@ -209,13 +232,22 @@ void main() {
   // everything that adds light on top of the image is collected here
   vec3 glow = volume.rgb * fogK * float(OPTION_FOGLIGHT);
 #if PIPELINE_SUN_SHAFTS
-  glow += texture(uSunShafts, uv).rgb * dayTint * uShaftStrength * cfRays(day) * seen;
+  glow += texture(uSunShafts, uv).rgb * dayTint * uShaftStrength * cfRays(day) * seen * (1.0 - rainK);
 #endif
   if (uBloomStrength > 0.0) {
     vec3 hb = texture(uBloom, uv).rgb;
-    glow += hb * uBloomStrength * float(OPTION_GLOW) * seen;
+#if PIPELINE_SUN_SHAFTS
+    if (uShaftStrength > 0.0 && rainK < 1.0) glow += texture(uSunShafts, uv).rgb * dayTint * uShaftStrength * cfRays(day) * seen * (1.0 - rainK);
+#endif
     if (float(OPTION_HALO) > 0.0) glow += hb * cfMask(hb * 0.2) * float(OPTION_HALO) * fogK * 0.25 * seen;   // 0.2 because the bloom is the sum of 5 levels
-    if (float(OPTION_GLARE) > 0.0) glow += cfGlare(hb) * seen;
+    if (float(OPTION_GLARE) > 0.0 && night > 0.0) glow += cfGlare(hb) * seen;
+  }
+
+  float motesK = cfNightAll();
+  if (motesK > 0.0) {
+    vec3 moteLight = volume.rgb;
+    if (uBloomStrength > 0.0) moteLight += texture(uBloom, uv).rgb * 0.2;
+    glow += cfMoteGlow(moteLight, uv, depth) * motesK * seen;
   }
 
   // bloom, halo, shafts and the fog light all feed on the same brightness, so pile it up
@@ -227,11 +259,12 @@ void main() {
   float toneLuma;
   color = tone(purkinje(cfExpose(color)), toneLuma);
 
-  color *= 1.0 + (depth < 1.0 ? 0.5 : 0.5 * wx) * fogK * (1.0 - smoothstep(0.6, 0.9, dot(color, LUMA)));    // brighter fog
+  float liftBase = depth < 1.0 ? mix(0.5, 0.5 * wx, smoothstep(0.6, 0.98, fogK)) : 0.5 * wx;   // fully fogged things get the same lift as the sky they melt into
+  color *= 1.0 + liftBase * (1.0 - 0.6 * cfOvercast()) * fogK * (1.0 - smoothstep(0.6, 0.9, dot(color, LUMA)));
 
   // cold grading for more saturated blues
   color = mix(color, cfGrade(color, vUv, fogK), clamp(float(OPTION_BLUE), 0.0, 1.0));
-  color = cfDayGrade(color, day, wx);
+  color = cfDayGrade(color, day, wd);
 
   float stainK = clamp(float(OPTION_STAIN), 0.0, 1.0) * stainGate;
   if (stainK > 0.0) color = cfStain(color, stainK, clamp(float(OPTION_STAINWARM), 0.0, 1.0));
@@ -241,10 +274,10 @@ void main() {
   if (domeAmt > 0.0) {
     float nightK = cfNightAll();
     float nightDome = mix(1.0, 0.0, nightK);   // black at night
-    float veilGain = depth < 1.0 ? mix(1.0, mix(CF_VEIL_LOW, CF_VEIL_HIGH, smoothstep(0.06, 0.31, uRainStrength)), wx) : 1.0;
-    color = mix(color, min(dispColor * dayTint * veilGain, vec3(1.0)) * nightDome, dispK * (1.0 - 0.8 * glowFrac * nightK));
+    color = mix(color, min(cfFarDim(cfMute(dispColor * dayTint, mute)), vec3(1.0)) * nightDome * mix(1.0, min(CF_RAIN_FAR / mix(1.0, CF_OVERCAST_FAR, cfOvercast()), 1.0), rainK), dispK * (1.0 - 0.8 * glowFrac * nightK));
   }
 
+  if (rainK > 0.0) color = cfRainDim(color, rainK * (1.0 - CF_RAIN_KEEP * max(fogK, dispK)));
   float dv = clamp(float(OPTION_DARKVISION), 0.0, 1.0);
   if (dv > 0.0) color += dv * 0.07 * (1.0 - smoothstep(0.0, 0.25, dot(color, LUMA))) * mix(vec3(1.0), vec3(0.80, 0.95, 1.10), cfNight()) * (1.0 - dispK);
 
@@ -258,7 +291,7 @@ void main() {
 
   float grain = clamp(float(OPTION_GRAIN), 0.0, 1.0);
   if (grain > 0.0) {
-    float g = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63)) - 0.5;
+    float g = cfJit - 0.5;
     color += g * grain * 0.09 * (1.0 - 0.6 * dot(color, LUMA));
   }
 
