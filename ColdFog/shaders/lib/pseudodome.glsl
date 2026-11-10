@@ -1,4 +1,4 @@
-// pseudodome library for coldFog, made by soachi | fog domes, one per cell of a grid, needs pseudonoise first
+// fog domes library
 #ifndef PSEUDODOME
 #define PSEUDODOME
 
@@ -35,7 +35,7 @@ void cfDomes(vec3 vd, float dist, float wallness, float amount, float weather, o
   float sigma = DOME_DENSITY / DOME_CELL * amount;
   float groundY = uEye.y - 1.7;
   float hugRange = max(1.0, 0.2 * DOME_CELL);
-  float jit = cfHash21(gl_FragCoord.xy + 5.588 * float(uFrame & 63));   // the grain hides the stepping
+  float jit = cfJit;   // the grain hides the stepping
   vec2 cell = floor(uEye.xz / DOME_CELL);
   for (int j = -1; j <= 1; j++) {
     for (int i = -1; i <= 1; i++) {
@@ -43,7 +43,6 @@ void cfDomes(vec3 vd, float dist, float wallness, float amount, float weather, o
       float hx = cfHash21(id);
       float hz = cfHash21(id + 17.3);
       float hr = cfHash21(id + 41.7);
-      float hc = cfHash21(id + 83.1);
       vec3 centre = vec3((id.x + 0.25 + 0.5 * hx) * DOME_CELL, groundY, (id.y + 0.25 + 0.5 * hz) * DOME_CELL);
       float radius = DOME_CELL * (0.32 + 0.18 * hr) * 1.35;
       vec3 radii = vec3(radius, max(radius * 0.5, 4.0), radius);   // flattened, but never lower than you
@@ -60,17 +59,22 @@ void cfDomes(vec3 vd, float dist, float wallness, float amount, float weather, o
         float t3 = min(t2, dist);
         if (t3 > t0) {
           float seg = t3 - t0;
+          float hc = cfHash21(id + 83.1);
           float dens = 0.0;
           for (int s = 0; s < DOME_STEPS; s++) {
             float t = t0 + seg * (float(s) + jit) / float(DOME_STEPS);
             vec3 pw = cfCurrent(uEye + vd * t, weather);
             vec3 u = (pw - centre) / radii;
-            // the texture is on the dome and slides faster the faster you move
-            vec2 q = (vec2(pw.x + pw.y * 0.7, pw.z + pw.y * 0.45) + uEye.xz * 0.5) / (radius * 0.25);
-            float n = cfLumps(q, uTime * (0.5 + hr));
-            float shape = 1.0 - smoothstep(0.3, 1.0, dot(u, u) + (n - 0.5) * DOME_TURB);   // a cloud and not a ball
-            float hug = 1.0 + DOME_HUG * wallness * exp(-(dist - t) / hugRange);
-            dens += shape * (0.5 + n) * hug * smoothstep(0.2 * DOME_CELL, 0.7 * DOME_CELL, t);   // thin close to you and thick further
+            float ramp = smoothstep(0.2 * DOME_CELL, 0.7 * DOME_CELL, t);   // thin close to you and thick further
+            float r2 = dot(u, u);
+            if (ramp > 0.0 && r2 < 1.0 + 0.5 * DOME_TURB) {   // outside of that the shape is zero whatever the noise says
+              // the texture is on the dome and slides faster the faster you move
+              vec2 q = (vec2(pw.x + pw.y * 0.7, pw.z + pw.y * 0.45) + uEye.xz * 0.5) / (radius * 0.25);
+              float n = cfLumps(q, uTime * (0.5 + hr));
+              float shape = 1.0 - smoothstep(0.3, 1.0, r2 + (n - 0.5) * DOME_TURB);   // a cloud and not a ball
+              float hug = 1.0 + DOME_HUG * wallness * exp(-(dist - t) / hugRange);
+              dens += shape * (0.5 + n) * hug * ramp;
+            }
           }
           float w = sigma * dens * seg / float(DOME_STEPS);
           tau += w;
