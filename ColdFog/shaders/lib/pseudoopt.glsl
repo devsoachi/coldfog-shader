@@ -104,6 +104,9 @@
 #ifndef OPTION_LIGHTCONE
 #define OPTION_LIGHTCONE 0.0
 #endif
+#ifndef OPTION_DUST
+#define OPTION_DUST 0.5
+#endif
 
 const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
 
