@@ -34,8 +34,3 @@ This shaderpack intends to make the game look like a foggy and hostile enviromen
 	scanline 0.25
 	colorbits 5.0
 	wobble 0.5
-
-### A really constant mist:
-	Constant Mist 0.12
-	Max Visibility 0.25
-	Fog Layer: 0.65
