@@ -3,7 +3,7 @@
 #define PSEUDOWEATHER
 
 
-const float CF_BOOST = 0.4;
+const float CF_BOOST = 0.6;
 const float CF_VIS_NEAR = 30.0;
 const float CF_VIS_FAR = 380.0;
 const float CF_VIS_NIGHT = 80.0;
@@ -11,14 +11,15 @@ const float CF_HORIZON_CLEAR = 0.3;
 const float CF_HORIZON_TOP = 0.18;
 const float CF_HORIZON_FLAT = 0.04;
 const float CF_SKY_PAINT = 0.5;
-const float CF_SKY_TOP = 0.95;
+const float CF_SKY_TOP = 0.6;
+const float CF_SKY_TOP_STORM = 0.5;
 const float CF_NIGHT_NEAR = 30.0; 
 const float CF_NIGHT_FAR = 70.0;
 const float CF_WALL_START = 0.35;
 const float CF_WALL_SOFT = 1.0;
 const float CF_WALL_ROUGH = 0.6;
 const float CF_WALL_PUFF = 0.3;
-const float CF_FLOOR = 0.12;
+const float CF_FLOOR = 0.7;
 const float CF_HUMID = 0.0025;
 const float CF_GREY = 0.5;
 const float CF_GREEN = 0.18;
@@ -40,8 +41,31 @@ const float CF_MUTE_DIM = 0.85;
 const float CF_OVERCAST_DIM = 0.4;
 const float CF_OVERCAST_GREY = 0.95;
 const float CF_OVERCAST_FAR = 0.5; 
-const float COLDFOG_MIST_SIGMA = 0.075;
-const float COLDFOG_MIST_HEIGHT = 12.0;
+const float CF_LOW_SIGMA = 0.10;
+const float CF_LOW_HEIGHT = 3.0;
+const float CF_LOW_CLEAR = 0.0;
+const float CF_TALL_SIGMA = 0.004;
+const float CF_TALL_HEIGHT = 40.0;
+const float CF_FOG_NORM = 0.65;
+const float CF_SUN_LIT = 1.35;
+const float CF_SUN_DARK = 0.8;
+const float CF_FLOOR_LOW = 0.9;
+const float CF_TOP_LOW = 4.0;
+const float CF_TOP_SOFT = 2.0;
+const float CF_TOP_WAVE = 1.6;
+const float CF_TOP_PUFF = 1.2;
+const float CF_WAVE_K1 = 0.18;
+const float CF_WAVE_K2 = 0.37;
+const float CF_WAVE_SPEED = 0.15;
+const float CF_WAVE_WARP = 2.5;
+const float CF_WAVE_WIND = 1.0;
+const float CF_TOP_GATE = 0.9;
+const float CF_FOG_SOLID = 0.3;
+const float CF_BLOCK = 1.0;
+const float CF_BLOCK_START = 30.0;
+const float CF_BLOCK_END = 42.0;
+const float CF_CLEAR_NEAR = 3.0;
+const float CF_CLEAR_FAR = 14.0;
 
 float cfMist() {
   float rain = smoothstep(0.005, 0.06, uRainStrength) * clamp(float(OPTION_DIMRAIN), 0.0, 1.0);
@@ -87,24 +111,61 @@ vec3 cfFarDim(vec3 c) {
   return c * mix(1.0, CF_OVERCAST_FAR, k);
 }
 
+#ifndef VIEWPOINT_WEATHER
+uniform vec2 uWind;
+#endif
+
+// the direction the waves of the fog travel, it follows the wind of the game and uses a fixed one when it is calm
+vec2 cfWaveDir() {
+  vec2 still = vec2(0.94, 0.34);
+  float w = length(uWind);
+  vec2 wind = w > 1.0e-3 ? uWind / w : still;
+  return normalize(mix(still, wind, CF_WAVE_WIND));
+}
+
+// height of the surface of the fog, long swells that travel with the wind and bend with a slow noise so they look like gas
+float cfSurfaceTop(vec3 pos) {
+  vec2 dir = cfWaveDir();
+  float along = dot(pos.xz, dir);
+  float across = dot(pos.xz, vec2(-dir.y, dir.x));
+  float warp = cfNoise(vec2(along * 0.03 - uTime * 0.05, across * 0.05)) - 0.5;
+  float swell1 = sin(along * CF_WAVE_K1 - uTime * CF_WAVE_SPEED + warp * CF_WAVE_WARP + across * 0.02);
+  float swell2 = sin(along * CF_WAVE_K2 - uTime * CF_WAVE_SPEED * 1.3 + warp * CF_WAVE_WARP * 1.5 - across * 0.035);
+  float puff = cfNoise(vec2(along * 0.07 - uTime * 0.1, across * 0.12)) - 0.5;
+  return CF_TOP_LOW + (swell1 * 0.6 + swell2 * 0.4) * CF_TOP_WAVE + puff * CF_TOP_PUFF;
+}
+
+// 1 under the surface of the fog and 0 over it, with a soft band around the surface
+float cfSurface(vec3 pos) {
+  float fogTop = cfSurfaceTop(pos);
+  return 1.0 - smoothstep(fogTop - CF_TOP_SOFT, fogTop + CF_TOP_SOFT, pos.y);
+}
+
+// depth of the low fog
+float cfLowTau(float eyeY, float mu, float d) {
+  float amt = mix(CF_LOW_CLEAR, 1.0, cfFogWeather());
+  float low = cfMistDepth(CF_LOW_SIGMA * amt, CF_LOW_HEIGHT, max(eyeY, -3.0 * CF_LOW_HEIGHT), mu, d);
+  float tall = cfMistDepth(CF_TALL_SIGMA * amt, CF_TALL_HEIGHT, max(eyeY, -3.0 * CF_TALL_HEIGHT), mu, d);
+  return low + tall;
+}
+
 // the fog amount along a sight line
 float cfFog(vec3 pos, float dist, float linDepth) {
   float fog = max(fogAt(linDepth, uFogRange), hazeAt(dist, uHaze)) * (1.0 - cfRainAmt());
   // it only starts a few squares away
   float mu = (pos.y - uEye.y) / max(dist, 1.0e-4);
-  float tau = cfMistDepth(cfMist() * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), mu, dist);
+  float tau = cfLowTau(uEye.y, mu, dist);
   float mist = (1.0 - exp(-tau)) * smoothstep(8.0, 40.0, dist);
   fog = 1.0 - (1.0 - fog) * (1.0 - mist);
   fog = pow(clamp(fog, 0.0, 1.0), CF_BOOST);
-  float floorK = 1.0 - exp(-dist * CF_FLOOR * cfFogWeather());
-  fog = max(fog, floorK);
+  float floorK = (1.0 - exp(-dist * CF_FLOOR * cfFogWeather())) * mix(1.0, cfSurface(pos), CF_FLOOR_LOW);   // the fog has a top so the roofs stay above it
   float humid = 1.0 - exp(-dist * CF_HUMID * (1.0 - 0.5 * cfNight()));
-  return 1.0 - (1.0 - fog) * (1.0 - humid);
+  return 1.0 - (1.0 - fog) * (1.0 - floorK) * (1.0 - humid);
 }
 
 // the fog amount seen in the sky
 float cfSkyFog(vec3 dir, float ref) {
-  float tau = cfMistDepth(cfMist() * COLDFOG_MIST_SIGMA, COLDFOG_MIST_HEIGHT, max(uEye.y, -3.0 * COLDFOG_MIST_HEIGHT), max(dir.y, 1.0e-3), 1.0e6);
+  float tau = cfLowTau(uEye.y, max(dir.y, 1.0e-3), 1.0e6);
   float natural = pow(clamp(1.0 - exp(-tau), 0.0, 1.0), CF_BOOST);
   float floorK = 1.0 - exp(-ref * CF_FLOOR * cfFogWeather());
   float shape = 1.0 - smoothstep(0.0, mix(0.12, 1.3, floorK), max(dir.y, 0.0));
@@ -113,7 +174,7 @@ float cfSkyFog(vec3 dir, float ref) {
 
 // far scenery that has no depth
 float cfHorizon(vec3 dir) {
-  return (1.0 - smoothstep(CF_HORIZON_FLAT, CF_HORIZON_TOP, max(dir.y, 0.0))) * clamp(float(OPTION_MODERN), 0.0, 1.0) * mix(CF_HORIZON_CLEAR, 1.0, cfFogWeather());
+  return (1.0 - smoothstep(CF_HORIZON_FLAT, CF_HORIZON_TOP, max(dir.y, 0.0))) * max(clamp(float(OPTION_MODERN), 0.0, 1.0), CF_BLOCK) * mix(CF_HORIZON_CLEAR, 1.0, cfFogWeather());
 }
 
 // sight limit by day
