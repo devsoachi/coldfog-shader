@@ -1,4 +1,4 @@
-// pseudofog-light library for coldFog, made by soachi | it generate random numbers and noise for pseudo-lighting effects
+// fog light library 
 #ifndef PSEUDOFOG_LIGHT
 #define PSEUDOFOG_LIGHT
 
@@ -25,7 +25,7 @@ float cfNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// bayer 4x4 dithering
+// bayer 4x4 ordered dithering matrix, returns a float in [0, 1)
 float cfBayer4(ivec2 p) {
   const float M[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
   return (M[(p.y & 3) * 4 + (p.x & 3)] + 0.5) / 16.0;
@@ -33,7 +33,7 @@ float cfBayer4(ivec2 p) {
 
 // own custom mist as of engine failing to include his own whose density falls off exponentially with height
 float cfMistDepth(float sigma, float H, float h0, float mu, float d) {
-  float x = d * mu / H;
+  float x = max(d * mu / H, -20.0);
   float k = abs(x) < 1.0e-3 ? d * (1.0 - 0.5 * x) : H / mu * (1.0 - exp(-x));   // = d * (1 - e^-x) / x, stable near 0
   return sigma * exp(-h0 / H) * k;
 }
