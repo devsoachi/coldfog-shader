@@ -2,7 +2,7 @@
 #ifndef PSEUDOLIGHT
 #define PSEUDOLIGHT
 
-const vec3 SODIUM_HUE = vec3(1.0, 0.62, 0.20) / 0.6704;   // sodium lamp
+const vec3 SODIUM_HUE = vec3(1.0, 0.46, 0.09) / 0.5481;   // sodium lamp
 const float CF_CONE_LOW = 0.015;
 const float CF_CONE_FLOOR = 0.06;
 const float CF_CONE_GAIN = 1.0;
@@ -24,8 +24,8 @@ float cfEmit(vec3 c) {
 float cfLamp(vec3 c) {
   float warmth = (c.r - c.b) / max(c.r, 1.0e-4);
   float gOverR = c.g / max(c.r, 1.0e-4);
-  return smoothstep(0.55, 0.8, warmth) * smoothstep(0.25, 0.45, gOverR) * (1.0 - smoothstep(1.3, 1.8, gOverR))
-       * smoothstep(0.03, 0.2, dot(c, LUMA) * uExposure * float(OPTION_EXPOSURE)) * cfNight();
+  return smoothstep(0.68, 0.82, warmth) * smoothstep(0.30, 0.42, gOverR) * (1.0 - smoothstep(0.70, 0.85, gOverR))
+       * smoothstep(0.12, 0.35, dot(c, LUMA) * uExposure * float(OPTION_EXPOSURE)) * cfNight();
 }
 
 // soft glare around bright lamps
@@ -51,8 +51,9 @@ vec3 cfCone(vec3 v) {
 
 vec3 cfSodium(vec3 c, float lampK) {
   float sl = dot(c, LUMA);
-  float strength = clamp(float(OPTION_SODIUM) * lampK, 0.0, 1.0);
+  float strength = clamp(float(OPTION_SODIUM) * lampK * lampK, 0.0, 1.0);
   vec3 amber = SODIUM_HUE * sl * (1.0 + 0.6 * float(OPTION_SODIUM) * lampK);
+  amber = mix(amber, vec3(amber.r), smoothstep(1.2, 2.0, amber.r));
   amber = mix(amber, vec3(1.0), smoothstep(0.85, 1.0, sl));
   return mix(c, amber, strength);
 }
