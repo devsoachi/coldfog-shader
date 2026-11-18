@@ -1,4 +1,4 @@
-# soachi's coldFog v2.2 | shader pack for Project Viewpoint
+# soachi's coldFog v2.3 | shader pack for Project Viewpoint
 
 <div align="center"><img width="569" height="112" alt="coldfog" src="https://github.com/user-attachments/assets/6671372f-a06a-4bc5-a439-d9572a3d478c" /></div>
 
@@ -22,10 +22,10 @@ This shaderpack intends to make the game look like a foggy and hostile enviromen
 
 ## Features:
 1. Pixelated, scanline and wobble effect, made for give the game a retro-like feel.
-2. Fog layer that moves within the wind.
-3. Uses Chromatic Aberration, Bloom, a Blue Contrast.
-4. Everything is configurable, whether if you want a real cold feel or a more green feel.
-5. A endless and always present fog.
+3. Uses Chromatic Aberration, Bloom.
+4. Everything is modular.
+5. Four stages of a day, with transitions between them.
+6. Incredibly dense and real fog.
 
 ## Recommended Settings:
 
