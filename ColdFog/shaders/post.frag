@@ -13,6 +13,13 @@ uniform float uExposure;
 uniform vec3 uFogColor;
 uniform vec2 uFogRange;
 uniform vec2 uHaze;
+uniform vec2 uHalfSize;
+uniform sampler2D uTranslucentReveal;
+uniform sampler2D uTranslucentSum;
+uniform sampler2D uTranslucentDistance;
+uniform sampler2D uFarDepth;
+uniform float uFarOn;
+uniform mat4 uFarUnproject;
 uniform float uTime;
 uniform int uFrame;
 uniform float uRainStrength;
@@ -50,6 +57,26 @@ uniform float uMist;
 #include "lib/pseudograde.glsl"
 #include "lib/pseudotest.glsl"
 #include "lib/pseudopelusa.glsl"
+#include "lib/pseudodust.glsl"
+
+vec4 cfVolume(vec2 uv, float depth) {
+  float d0 = linearDepth(depth);
+  vec2 p = uv * uHalfSize - 0.5;
+  vec2 f = fract(p);
+  vec2 base = (floor(p) + 0.5) / uHalfSize;
+  vec4 sum = vec4(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec2 o = vec2(float(i & 1), float(i >> 1));
+    vec2 q = base + o / uHalfSize;
+    float wb = mix(1.0 - f.x, f.x, o.x) * mix(1.0 - f.y, f.y, o.y);
+    float wd = exp(-abs(linearDepth(texture(uDepth, q).r) - d0) / (0.08 * d0 + 0.2));
+    float w = wb * wd + 1.0e-4;
+    sum += texture(uVolume, q) * w;
+    wsum += w;
+  }
+  return sum / wsum;
+}
 
 void main() {
   // pixel effect and wobble
@@ -83,12 +110,22 @@ void main() {
   if (uDebugView != 0) { fragColor = vec4(color, 1.0); return; }
   if (any(isnan(color)) || any(isinf(color))) color = vec3(0.0);
 
+  float depth = texture(uDepth, uv).r;
   vec4 volume = vec4(0.0, 0.0, 0.0, 1.0);
-  if (uVolumeOn > 0.0) volume = mix(volume, texture(uVolume, uv), uVolumeOn);
+  if (uVolumeOn > 0.0) volume = mix(volume, cfVolume(uv, depth), uVolumeOn);
   if (any(isnan(volume)) || any(isinf(volume))) volume = vec4(0.0, 0.0, 0.0, 1.0);
 
-  float depth = texture(uDepth, uv).r;
+  bool farGround = depth >= 1.0 && uFarOn > 0.5 && texture(uFarDepth, uv).r < 1.0;
+
+  // the glass is already inside the colour
+  vec4 glassSum = texture(uTranslucentSum, uv);
+  float glassThrough = texture(uTranslucentReveal, uv).r;
+  float glassCover = glassSum.a > 1.0e-6 ? 1.0 - glassThrough : 0.0;
+  vec3 glass = glassCover > 0.0 ? glassSum.rgb / glassSum.a * glassCover : vec3(0.0);
+  color = max(color - glass, vec3(0.0));
+
   vec3 air = volume.rgb;
+  if (float(OPTION_LIGHTCONE) > 0.0) air = mix(air, cfCone(air), clamp(float(OPTION_LIGHTCONE), 0.0, 1.0) * cfNight());
   color = color * volume.a + air;
 
   // weather, time of day and the amount of each fog
@@ -130,12 +167,14 @@ void main() {
   }
 
   float stainGate = mix(1.0, night, clamp(float(OPTION_STAINNIGHT), 0.0, 1.0));  // 1 always on and 0 off
+  vec3 fogDir = vec3(0.0, 0.0, 1.0);   // where the fog is looked at, for the side of the sun
 
   if (depth < 1.0) {
     vec3 pos = sp;
     vec3 off = pos - uEye;
     float dist = length(off);
     vec3 vd = off / max(dist, 1.0e-4);
+    fogDir = vd;
     float clump = 0.5 * clamp(classicAmt + modern * wx, 0.0, 1.0);
     float k = 1.0;
     if (dist >= vis / (1.0 - 0.5 * clump)) {
@@ -158,6 +197,10 @@ void main() {
       k = clamp(k * (1.0 + (wisp - 0.5) * 0.09), 0.0, 1.0);
 
       if (layerAmt > 0.0) k = 1.0 - (1.0 - k) * (1.0 - cfLayer(vd, dist, layerAmt, clump));
+      k *= smoothstep(CF_CLEAR_NEAR, CF_CLEAR_FAR, dist); 
+            k = clamp(k, 0.0, 1.0);
+      k = mix(k, k * k * (3.0 - 2.0 * k), CF_FOG_SOLID);
+      k *= mix(1.0, cfSurface(pos), CF_TOP_GATE);   // the whole fog ends at its surface
 
       float lit = night > 0.0 ? mix(cfMask(color), cfEmit(color), night) : cfMask(color);   // the lights go into the fog
       if (night > 0.0) color *= 1.0 - smoothstep(CF_NIGHT_NEAR, CF_NIGHT_FAR, dist) * night * (1.0 - lit);
@@ -191,7 +234,7 @@ void main() {
         color = mix(color, color * vec3(0.42, 0.30, 0.20), smoothstep(0.35, 0.9, g) * spots);
       }
 
-      veil = smoothstep(vis * 0.35, vis, distN);
+      veil = max(veil, smoothstep(CF_BLOCK_START, CF_BLOCK_END, distN) * cfFogWeather() * CF_BLOCK);
       k = max(k, veil);
       dispK = 1.0 - (1.0 - domeShow) * (1.0 - veil);
       dispColor = mix(DOME_FAR, domeTint, domeShow / max(domeShow + veil, 1.0e-4));
@@ -205,27 +248,45 @@ void main() {
   } else {
     vec3 dir = normalize(scenePos(uv, 0.999) - scenePos(uv, 0.5)); 
     const float REF = 120.0;   // the distance the sky fog is judged at
+    fogDir = dir;
     float skyBase = cfSkyFog(dir, REF);
     veil = smoothstep(visDay * 0.55, visDay, REF);
     skyBase = max(skyBase, veil);
     float skyK = max(skyBase, cfHorizon(dir)) * (1.0 - fogCut);   // the horizon band covers far scenery
+    if (farGround) {
+      vec4 fp = uFarUnproject * vec4(uv * 2.0 - 1.0, texture(uFarDepth, uv).r * 2.0 - 1.0, 1.0);
+      float farAt = abs(fp.w) > 1.0e-6 ? distance(fp.xyz / fp.w, uEye) : 1.0e4;
+      skyK = max(skyK, smoothstep(CF_BLOCK_START, CF_BLOCK_END, farAt) * cfFogWeather() * CF_BLOCK);
+    }
     fogK = skyK;
     fogHdr = cfMute(cfFogColor(normalize(vec3(dir.x, dir.y * (1.0 - skyK), dir.z) + vec3(0.0, 0.0, 1.0e-4))) * dayTint, mute);
     color = mix(color, fogHdr, skyK);
-    color += cfSun(dir, day, wd);
+    if (!farGround) color += cfSun(dir, day, wd);
+    sodiumK = night > 0.0 ? cfLamp(color) : 0.0;
     float skyUp = smoothstep(0.0, 0.8, max(dir.y, 0.0));
     float skyFogW = cfFogWeather();
-    float skyBand = clamp(3.0 * skyFogW, 0.0, 1.0) * (1.0 - smoothstep(0.14, 0.45, max(dir.y, 0.0)));   // the sky beside the far veil takes its colour in full
+    float skyBand = clamp(3.0 * skyFogW, 0.0, 1.0) * (1.0 - smoothstep(0.14, 0.45, max(dir.y, 0.0)));
     dispK = max(skyK, (1.0 - cfNightAll()) * max(clamp(2.0 * skyFogW, 0.0, 1.0) * skyUp, skyBand));
-    dispColor = DOME_FAR * mix(1.0, CF_SKY_TOP, skyUp);   // the sky gets darker going up so it has a gradient
+    dispColor = DOME_FAR * mix(1.0, mix(CF_SKY_TOP, CF_SKY_TOP_STORM, max(rainK, 0.5 * cfOvercast())), skyUp);
+  }
+
+  float dustK = clamp(float(OPTION_DUST), 0.0, 1.0) * smoothstep(0.5, 0.8, uEyeSky) * (1.0 - cfNightAll());   // only outdoors and by day
+  if (dustK > 0.0) {
+    vec3 dustDir = normalize(scenePos(uv, 0.999) - uEye);
+    float dustSurf = depth < 1.0 ? distance(sp, uEye) : 1.0e3;
+    color = mix(color, color * CF_DUST_TINT, cfDust(dustDir, dustSurf) * dustK);
   }
 
   if (uMeter != 0) { fragColor = meterValue(color, depth, vUv); return; }
+  
 
   // fog level, how bright the fog is whatever the sky does
   float fl = max(dot(fogHdr, LUMA) * uExposure * float(OPTION_EXPOSURE), 1.0e-3);
   float want = 0.4 * mix(1.0, 0.1, cfNightAll()) * mix(1.0, 0.75, rainK) * mix(1.0, CF_OVERCAST_DIM, cfOvercast()) * mix(1.0, CF_MUTE_DIM, mute);
-  color += fogHdr * (clamp(want / fl, 0.25, 8.0) - 1.0) * fogK;
+  float fogNorm = mix(1.0, clamp(want / fl, 0.25, 8.0), CF_FOG_NORM);
+  float sunLit = smoothstep(-0.02, 0.15, uSunTrue.y) * (1.0 - cfOvercast()) * (1.0 - rainK);   // only direct light has a side
+  float sunSide = mix(1.0, mix(CF_SUN_DARK, CF_SUN_LIT, smoothstep(-0.4, 1.0, dot(fogDir, normalize(uSunTrue)))), sunLit);
+  color += fogHdr * (fogNorm * sunSide - 1.0) * fogK;
 
   float seen = 1.0 - veil;
 
@@ -239,7 +300,7 @@ void main() {
 #if PIPELINE_SUN_SHAFTS
     if (uShaftStrength > 0.0 && rainK < 1.0) glow += texture(uSunShafts, uv).rgb * dayTint * uShaftStrength * cfRays(day) * seen * (1.0 - rainK);
 #endif
-    if (float(OPTION_HALO) > 0.0) glow += hb * cfMask(hb * 0.2) * float(OPTION_HALO) * fogK * 0.25 * seen;   // 0.2 because the bloom is the sum of 5 levels
+    if (float(OPTION_HALO) > 0.0) glow += hb * cfMask(hb * 0.2) * float(OPTION_HALO) * fogK * 0.25 * seen;
     if (float(OPTION_GLARE) > 0.0 && night > 0.0) glow += cfGlare(hb) * seen;
   }
 
@@ -256,10 +317,24 @@ void main() {
   color += glow * inversesqrt(1.0 + glowLuma * glowLuma);
   float glowFrac = glowLuma * inversesqrt(1.0 + glowLuma * glowLuma);
 
+  float glassFog = 0.0;
+  float glassAhead = 1.0;
+  if (glassCover > 0.0) {
+    vec2 ga = texture(uTranslucentDistance, uv).rg;
+    float glassAt = ga.r / max(ga.g, 1.0e-6);
+    vec3 gp = scenePos(uv, 0.5);
+    vec3 gdir = normalize(gp - uEye);
+    float gLin = glassAt * linearDepth(0.5) / max(distance(gp, uEye), 1.0e-4);
+    glassFog = max(cfFog(uEye + gdir * glassAt, glassAt, gLin), smoothstep(vis * 0.35, vis, glassAt));
+    glassFog *= mix(CF_INDOOR, 1.0, smoothstep(0.5, 0.8, uEyeSky)) * (1.0 - fogCut) * smoothstep(CF_CLEAR_NEAR, CF_CLEAR_FAR, glassAt);
+    glassAhead = smoothstep(0.1, 0.5, (fogK - glassFog) / max(fogK, 1.0e-3));
+  }
+
   float toneLuma;
+  color += glass * (1.0 - glassFog) * dayTint;
   color = tone(purkinje(cfExpose(color)), toneLuma);
 
-  float liftBase = depth < 1.0 ? mix(0.5, 0.5 * wx, smoothstep(0.6, 0.98, fogK)) : 0.5 * wx;   // fully fogged things get the same lift as the sky they melt into
+  float liftBase = depth < 1.0 ? mix(0.5, 0.5 * wx, smoothstep(0.6, 0.98, fogK)) : 0.5 * wx;
   color *= 1.0 + liftBase * (1.0 - 0.6 * cfOvercast()) * fogK * (1.0 - smoothstep(0.6, 0.9, dot(color, LUMA)));
 
   // cold grading for more saturated blues
@@ -274,7 +349,7 @@ void main() {
   if (domeAmt > 0.0) {
     float nightK = cfNightAll();
     float nightDome = mix(1.0, 0.0, nightK);   // black at night
-    color = mix(color, min(cfFarDim(cfMute(dispColor * dayTint, mute)), vec3(1.0)) * nightDome * mix(1.0, min(CF_RAIN_FAR / mix(1.0, CF_OVERCAST_FAR, cfOvercast()), 1.0), rainK), dispK * (1.0 - 0.8 * glowFrac * nightK));
+    color = mix(color, min(cfFarDim(cfMute(dispColor * dayTint, mute)), vec3(1.0)) * nightDome * mix(1.0, min(CF_RAIN_FAR / mix(1.0, CF_OVERCAST_FAR, cfOvercast()), 1.0), rainK), dispK * (1.0 - glassCover * glassAhead) * (1.0 - 0.8 * glowFrac * nightK));
   }
 
   if (rainK > 0.0) color = cfRainDim(color, rainK * (1.0 - CF_RAIN_KEEP * max(fogK, dispK)));
